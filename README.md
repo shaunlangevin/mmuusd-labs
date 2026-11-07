@@ -18,6 +18,8 @@ Interactive physics labs for the district's Quest 3 headsets (WebXR, passthrough
 5. **Explain.** Sentence frames, the Rainy Morning word bank, and a new question.
 6. **Challenge.** They set everything to land the cannon on a target line.
 
+**Options → Start over (next pair)** clears everything for the next students; it takes two taps, so it can't happen by accident.
+
 ## Link settings (ArborXR WebXR link)
 
 | Setting | Example | What it does |
@@ -30,6 +32,7 @@ Interactive physics labs for the district's Quest 3 headsets (WebXR, passthrough
 | `calm` | `calm=on` | Calm mode: a soft pop, no smoke |
 | `number` | `number=on` | Show number: the reading appears in the magnifier and table |
 | `fire` | `fire=button` | no lanyard; Fire button only |
+| `start` | `start=plan` | skip "Try it" and the 3rd-law question (for day 2) |
 | `debug` | `debug=1` | console logging |
 
 ## Files

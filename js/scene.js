@@ -122,7 +122,8 @@ export function buildLab(onProgress) {
     g.setLength = (L) => { shaft.scale.x = Math.max(0.001, L - 0.22); head.position.x = Math.max(0.12, L - 0.11); g.userData.label.position.x = L / 2; };
     return g;
   };
-  const arrows = { ball: arrow(0x4fd17a, 'push on ball'), cannon: arrow(0xf06a4f, 'push on cannon'), friction: arrow(0xffd24a, 'friction') };
+  // blue and orange (not red/green) so colour-blind students can tell the two pushes apart; each is labelled too
+  const arrows = { ball: arrow(0x2f8fe8, 'push on ball'), cannon: arrow(0xf28c28, 'push on cannon'), friction: arrow(0xd8d8d8, 'friction') };
 
   // flags: the prediction (blue) and one faint flag per trial ("ghosts")
   const flag = (color, opacity = 1) => {

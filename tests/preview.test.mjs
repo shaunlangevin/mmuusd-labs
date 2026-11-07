@@ -23,6 +23,8 @@ export default (test) => {
     await press(p, 'toPlan'); await press(p, 'plan:cannon'); await press(p, 'startTest');
     s = await st(p); eq([s.phase, s.planKey, s.settings], ['test', 'cannon', { ball: 'iron', cannon: 'c1000', powder: 'p2', wheels: 'rolling' }], 'testing the cannon\'s weight, others kept the same');
     await press(p, 'fire'); eq((await st(p)).anim, null, 'Fire waits for a prediction');
+    ok(await p.evaluate(() => window.__dbg.panel.spec.blocks.some((b) => b.p && b.p.includes('click on the ruler'))), 'on a screen, the panel says to click the ruler (not "pull the trigger")');
+    eq(await p.evaluate(() => window.__dbg.panel.buttons.find((b) => b.id === 'fire').disabled), true, 'Fire is off until the prediction');
     const means = [];
     for (let i = 0; i < 3; i++) {
       await press(p, 'level:' + i);
@@ -82,12 +84,38 @@ export default (test) => {
     const ids = await p.evaluate(() => window.__dbg.panel.buttons.map((b) => b.id));
     ok(!ids.some((i) => i.startsWith('plan:')), 'locked: students cannot pick another variable');
     eq((await st(p)).planKey, 'powder', 'the class tests the powder');
-    await press(p, 'startTest'); await p.evaluate(() => window.__dbg.predictCm(20)); await press(p, 'fire'); await idle(p);
+    await press(p, 'startTest');
+    ok(await p.evaluate(() => window.__dbg.panel.spec.blocks.some((b) => b.p && b.p.includes('haz clic en la regla'))), 'Spanish screen wording');
+    await p.evaluate(() => window.__dbg.predictCm(20)); await press(p, 'fire'); await idle(p);
     const cell = await p.evaluate(() => window.__dbg.panel.spec.blocks.find((b) => b.table).table.rows[0][1]);
     eq(cell, '✓', 'without "Show number", students read the ruler and the table just ticks the trial');
     eq(await p.evaluate(() => window.__dbg.loupe.showNum), false, 'the magnifier has no number');
     await press(p, 'options'); await press(p, 'acc:num');
     eq(await p.evaluate(() => window.__dbg.loupe.showNum), true, 'the support turns the number on');
     await p.close();
+  });
+
+  test('Start over (two taps) gives the next pair a fresh lab; ?start=plan skips to planning', async () => {
+    const p = await page();
+    await ready(p, '?number=on');
+    await p.click('#btn-preview');
+    await press(p, 'fire'); await idle(p); await press(p, 'q3:same'); await replayEnd(p); await press(p, 'rp:done'); await press(p, 'toPlan');
+    await press(p, 'plan:powder'); await press(p, 'startTest'); await p.evaluate(() => window.__dbg.predictCm(30)); await press(p, 'fire'); await idle(p);
+    ok(Object.keys((await st(p)).data).length === 1, 'a trial is in the table');
+    await press(p, 'options');
+    ok(await p.evaluate(() => window.__dbg.panel.spec.blocks.some((b) => b.p && b.p.includes('Zack_Hawley'))), 'the model credit is in Options');
+    await press(p, 'restart'); eq((await st(p)).phase, 'test', 'one tap only asks to confirm');
+    await press(p, 'restart');
+    const s = await st(p);
+    eq([s.phase, s.planKey, s.data, s.predCm, s.cannonX, s.optionsOpen], ['try', null, {}, null, 0, false], 'back to "Try it" with an empty table');
+    ok(await p.evaluate(() => !window.__dbg.L.predFlag.visible && window.__dbg.L.ghosts.length === 0), 'no flags left on the track');
+    await p.close();
+    const q = await page();
+    await ready(q, '?start=plan&lock=wheels');
+    eq([(await st(q)).phase, (await st(q)).planKey], ['plan', 'wheels'], 'day 2 starts at the plan');
+    const cols = await q.evaluate(() => ['ball', 'cannon'].map((k) => window.__dbg.L.arrows[k].userData.shaft.material.color.getHexString()));
+    eq(cols, ['2f8fe8', 'f28c28'], 'push arrows are blue and orange (colour-blind safe)');
+    eq(pageErrors(q), [], 'page errors');
+    await q.close();
   });
 };

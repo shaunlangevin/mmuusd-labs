@@ -21,6 +21,7 @@ export default (test) => {
     await tap(p, 'q3:same'); eq((await st(p)).phase, 'watch', 'buttons work with the controller');
     await tap(p, 'rp:done'); await tap(p, 'toPlan'); await tap(p, 'plan:ball'); await tap(p, 'startTest');
     s = await st(p); eq([s.phase, s.planKey], ['test', 'ball'], 'testing');
+    ok(await p.evaluate(() => window.__dbg.panel.spec.blocks.some((b) => b.p && b.p.includes('pull the trigger'))), 'in the headset, the panel says to point and pull the trigger');
     const at = await p.evaluate(() => window.__dbg.trackWorld(30));
     await aim(p, CP, at); await trigger(p);
     s = await st(p); near(s.predCm, 30, 4, 'pointing at the track places the prediction flag');

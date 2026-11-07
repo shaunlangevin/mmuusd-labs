@@ -14,7 +14,7 @@ const UP = new THREE.Vector3(0, 1, 0);
 const flag = (v, def) => (v == null ? def : !/^(0|off|false|no)$/i.test(v));
 
 // ═════════════ settings (from the ArborXR link, then the student's own choices) ═════════════
-// ?lang=en|es  ?sizes=desk,half,life  ?size=desk  ?lock=ball|cannon|powder|wheels  ?text=big  ?calm=on  ?number=on  ?fire=button  ?debug=1
+// ?lang=en|es  ?sizes=desk,half,life  ?size=desk  ?lock=ball|cannon|powder|wheels  ?text=big  ?calm=on  ?number=on  ?fire=button  ?start=plan  ?debug=1
 const SIZE_SCALE = { desk: 1 / 7, half: 0.5, life: 1 };
 const allowed = (params.get('sizes') || 'desk,half,life').split(',').map((s) => s.trim()).filter((s) => s in SIZE_SCALE);
 const SIZES = allowed.length ? allowed : ['desk'];
@@ -63,7 +63,9 @@ const reticle = new THREE.Mesh(new THREE.RingGeometry(0.11, 0.15, 48).rotateX(-M
 reticle.renderOrder = 20; reticle.visible = false; scene.add(reticle);
 
 // ═════════════ lab state ═════════════
-let phase = 'try';             // try | q3 | watch | answer | plan | test | explain | challenge
+const START = params.get('start') === 'plan' ? 'plan' : 'try';   // ?start=plan skips "Try it" and the 3rd-law question (day 2)
+let phase = START;             // try | q3 | watch | answer | plan | test | explain | challenge
+let confirmRestart = false;
 let optionsOpen = false;
 let q3Answer = null;
 let settings = { ...DEFAULTS };
@@ -94,7 +96,7 @@ function panelSpec() {
   const fireRow = (enabled = true) => ({ row: [{ id: 'fire', label: triesFired ? t.fireAgain : t.fire, primary: true, disabled: busy || !enabled }], h: 96 });
   const optRow = { row: [{ id: 'options', label: '⚙ ' + t.options, w: 1 }], h: 70, after: 0 };
   switch (phase) {
-    case 'try': return { kicker, title: t.tryTitle, blocks: [...(S.lanyard ? [{ p: t.tryBody }] : []), { p: t.tryHint, style: 'dim' }, fireRow(), optRow] };
+    case 'try': return { kicker, title: t.tryTitle, blocks: [...(mode === 'desktop' ? [{ p: t.tryBodyScreen }] : S.lanyard ? [{ p: t.tryBody }] : []), { p: t.tryHint, style: 'dim' }, fireRow(), optRow] };
     case 'q3': return { kicker, title: t.q3Title, blocks: [{ p: t.q3Body },
       { row: [{ id: 'q3:ball', label: t.q3Ball }, { id: 'q3:cannon', label: t.q3Cannon }, { id: 'q3:same', label: t.q3Same }], h: 96 }, optRow] };
     case 'answer': return { kicker, title: q3Answer === 'same' ? t.ansRight : t.ansSurprise, blocks: [{ p: t.ansBody }, { p: t.ansThink, style: 'em' },
@@ -137,9 +139,10 @@ function testStep() {
   const t = T(), n = countFor(curLevel().id);
   if (allRowsDone()) return t.allDone;
   if (n >= 3) return t.stepRowDone + ' ' + t.stepPick;
-  if (test.predFor !== curLevel().id) return t.stepPredict;
-  if (lastShot && lastShot.forLevel === curLevel().id && lastShot.n === n && n > 0 && !anim) return t.stepRead(n) + ' ' + (n < 3 ? t.stepFire : '');
-  return t.stepFire;
+  const screen = mode === 'desktop', fireStep = screen || !S.lanyard ? t.stepFireScreen : t.stepFire;
+  if (test.predFor !== curLevel().id) return screen ? t.stepPredictScreen : t.stepPredict;
+  if (lastShot && lastShot.forLevel === curLevel().id && lastShot.n === n && n > 0 && !anim) return t.stepRead(n) + ' ' + (n < 3 ? fireStep : '');
+  return fireStep;
 }
 function testSpec() {
   const t = T(), busy = !!anim;
@@ -191,7 +194,9 @@ function optionsSpec() {
   blocks.push({ p: t.supports, style: 'label', after: 6 });
   blocks.push({ row: [{ id: 'acc:big', label: t.bigText, sel: S.big }, { id: 'acc:calm', label: t.calm, sel: S.calm }, { id: 'acc:num', label: t.number, sel: S.num }], h: 80 });
   if (mode !== 'desktop') blocks.push({ row: [{ id: 'move', label: t.move }, { id: 'exit', label: t.exit }], h: 80 });
-  blocks.push({ row: [{ id: 'closeOptions', label: t.close, primary: true }], h: 84, after: 0 });
+  blocks.push({ row: [{ id: 'restart', label: confirmRestart ? t.restartSure : '⟲ ' + t.startOver, sel: confirmRestart }], h: 80 });
+  blocks.push({ row: [{ id: 'closeOptions', label: t.close, primary: true }], h: 84 });
+  blocks.push({ p: t.credit, style: 'dim', after: 0 });
   return { kicker: t.labTitle, title: t.options, blocks };
 }
 function refresh() {
@@ -205,8 +210,10 @@ function onButton(id) {
   if (!id || !panel.buttons.some((b) => b.id === id && !b.disabled)) return;   // only what the panel shows right now
   unlockAudio();
   const [a, b, c] = id.split(':');
+  if (a !== 'restart') confirmRestart = false;
   if (a === 'options') { optionsOpen = true; return refresh(); }
   if (a === 'closeOptions') { optionsOpen = false; return refresh(); }
+  if (a === 'restart') { if (!confirmRestart) { confirmRestart = true; return refresh(); } return startOver(); }
   if (a === 'lang') { S.lang = b; relabel(); syncPage(); return refresh(); }
   if (a === 'size') { setSize(b); return refresh(); }
   if (a === 'acc') { S[b] = !S[b]; syncPage(); updateLoupe(); return refresh(); }
@@ -228,6 +235,17 @@ function onButton(id) {
   if (a === 'backExplain') { phase = 'explain'; resetShots(); L.target.visible = false; applySettings({ ...DEFAULTS }); return refresh(); }
   if (a === 'set') { settings[b] = c; applySettings(settings); ch.result = null; return refresh(); }
 }
+// "Start over": a fresh lab for the next pair (the table and predictions are cleared; nothing was saved anyway)
+function startOver() {
+  confirmRestart = false; optionsOpen = false;
+  anim = null; smoke = null; L.puffs.forEach((p) => { p.visible = false; });
+  phase = START; q3Answer = null; planKey = S.lock; triesFired = 0;
+  test.levelIdx = 0; test.data = {}; test.predCm = null; test.predFor = null; test.arrows = false;
+  ch.target = null; ch.result = null;
+  applySettings({ ...DEFAULTS });
+  resetShots(); L.target.visible = false;
+  refresh();
+}
 function startTest() {
   phase = 'test'; test.levelIdx = 0; test.data = {}; test.predCm = null; test.predFor = null;
   resetShots(); applySettings(settingsForTest()); refresh();
@@ -244,7 +262,7 @@ function resetShots() {
   anim = null; lastShot = null; L.clearGhosts(); L.predFlag.visible = false; loupe.mesh.visible = false;
   hideArrows(); L.setCannonX(0, wheels); L.ball.visible = false; L.target.visible = phase === 'challenge';
 }
-function applySettings(st) { settings = { ...st }; L.showSettings(settings, T()); }
+function applySettings(st) { settings = { ...st }; L.showSettings(settings, T()); sizeLabels(); }
 function relabel() {
   const t = T();
   L.setLabelText(L.arrows.ball.userData.label, t.pushBall); L.setLabelText(L.arrows.cannon.userData.label, t.pushCannon);
@@ -720,7 +738,7 @@ function onSessionEnd() {
   mode = 'desktop'; placing = false; pull = null; drag = null;
   anchor = null; anchorLast = null; wantAnchor = false; anchorGen++;
   scene.background = BG; ground.visible = true; reticle.visible = false; hint.mesh.visible = false;
-  controls.enabled = true; layoutDesktop(); onResize();
+  controls.enabled = true; layoutDesktop(); onResize(); refresh();
   $('start').hidden = false;
 }
 

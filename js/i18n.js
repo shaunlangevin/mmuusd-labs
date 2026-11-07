@@ -44,6 +44,10 @@ export const UI = {
     stepPredict: 'Predict: point at the track and pull the trigger to place your flag where you think the cannon will stop.',
     stepFire: 'Now pull the lanyard to fire.',
     stepRead: (n) => `Read the ruler at the red pointer and call it out. Trial ${n} of 3.`,
+    // the same steps on a Chromebook or projector (mouse instead of a controller)
+    tryBodyScreen: 'Click Fire (or click the rope handle) to fire the cannon.',
+    stepPredictScreen: 'Predict first: click on the ruler where you think the cannon will stop. A blue flag marks your prediction, and then Fire turns on.',
+    stepFireScreen: 'Now click Fire.',
     stepRowDone: 'Row done! Swap roles. Say it in one sentence: what changed, and why?',
     stepPick: 'Pick the next one to test.',
     allDone: 'All rows done! Calculate each average, then explain your results.',
@@ -72,6 +76,7 @@ export const UI = {
     chHitNoNum: 'On the line!', chFarNoNum: 'Too far. Try again.', chShortNoNum: 'Too short. Try again.',
     newTarget: 'New target', target: 'target',
     // options
+    startOver: 'Start over (next pair)', restartSure: 'Tap again to start over',
     options: 'Options', close: 'Close', move: 'Move the cannon', exit: 'Exit headset', lang: 'Language',
     // variables
     vars: { ball: 'Ball', cannon: 'Cannon weight', powder: 'Powder', wheels: 'Wheels' },
@@ -123,6 +128,9 @@ export const UI = {
     stepPredict: 'Predice: apunta a la pista y aprieta el gatillo para poner tu bandera donde crees que se detendrá el cañón.',
     stepFire: 'Ahora jala la cuerda de disparo para disparar.',
     stepRead: (n) => `Lee la regla en el indicador rojo y dilo en voz alta. Prueba ${n} de 3.`,
+    tryBodyScreen: 'Haz clic en Disparar (o en la manija de la cuerda) para disparar el cañón.',
+    stepPredictScreen: 'Primero predice: haz clic en la regla donde crees que se detendrá el cañón. Una bandera azul marca tu predicción y luego se activa Disparar.',
+    stepFireScreen: 'Ahora haz clic en Disparar.',
     stepRowDone: '¡Fila completa! Cambien de papel. Dilo en una oración: ¿qué cambió y por qué?',
     stepPick: 'Elige lo siguiente que vas a probar.',
     allDone: '¡Todas las filas completas! Calcula cada promedio y luego explica tus resultados.',
@@ -147,6 +155,7 @@ export const UI = {
     chShort: (cm) => `Se quedó corto: ${cm} cm. Inténtalo otra vez.`,
     chHitNoNum: '¡En la línea!', chFarNoNum: 'Se pasó. Inténtalo otra vez.', chShortNoNum: 'Se quedó corto. Inténtalo otra vez.',
     newTarget: 'Nueva meta', target: 'meta',
+    startOver: 'Empezar de nuevo (otra pareja)', restartSure: 'Toca otra vez para empezar de nuevo',
     options: 'Opciones', close: 'Cerrar', move: 'Mover el cañón', exit: 'Salir del visor', lang: 'Idioma',
     vars: { ball: 'Bala', cannon: 'Peso del cañón', powder: 'Pólvora', wheels: 'Ruedas' },
     varsThe: { ball: 'la bala', cannon: 'el peso del cañón', powder: 'la pólvora', wheels: 'las ruedas' },
