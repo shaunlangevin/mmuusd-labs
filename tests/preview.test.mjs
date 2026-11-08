@@ -22,6 +22,7 @@ export default (test) => {
     ok(await p.evaluate(() => window.__dbg.panel.spec.title.startsWith('Surprise')), 'a wrong guess gets "Surprise: the same!"');
     await press(p, 'toPlan'); await press(p, 'plan:cannon'); await press(p, 'startTest');
     s = await st(p); eq([s.phase, s.planKey, s.settings], ['test', 'cannon', { ball: 'iron', cannon: 'c1000', powder: 'p2', wheels: 'rolling' }], 'testing the cannon\'s weight, others kept the same');
+    await idle(p);   // the cannon rolls back to the start line
     await press(p, 'fire'); eq((await st(p)).anim, null, 'Fire waits for a prediction');
     ok(await p.evaluate(() => window.__dbg.panel.spec.blocks.some((b) => b.p && b.p.includes('click on the ruler'))), 'on a screen, the panel says to click the ruler (not "pull the trigger")');
     eq(await p.evaluate(() => window.__dbg.panel.buttons.find((b) => b.id === 'fire').disabled), true, 'Fire is off until the prediction');
@@ -30,7 +31,7 @@ export default (test) => {
       await press(p, 'level:' + i);
       await p.evaluate(() => window.__dbg.predictCm(40));
       eq((await st(p)).predCm, 40, 'the prediction flag');
-      for (let j = 0; j < 3; j++) { await press(p, 'fire'); await idle(p); }
+      for (let j = 0; j < 3; j++) { await press(p, 'fire'); await idle(p); eq((await st(p)).shotStartX, 0, 'every shot starts from the start line (0 cm)'); }
       const d = (await st(p)).data;
       const row = Object.values(d)[i]; eq(row.length, 3, 'three trials in the row');
       means.push(row.reduce((a, x) => a + x, 0) / 3);
@@ -85,6 +86,8 @@ export default (test) => {
     ok(!ids.some((i) => i.startsWith('plan:')), 'locked: students cannot pick another variable');
     eq((await st(p)).planKey, 'powder', 'the class tests the powder');
     await press(p, 'startTest');
+    ok(await p.evaluate(() => window.__dbg.panel.spec.blocks.some((b) => b.p && b.p.includes('regresa el cañón'))), 'while it rolls back to the start line, the panel says so');
+    await idle(p);
     ok(await p.evaluate(() => window.__dbg.panel.spec.blocks.some((b) => b.p && b.p.includes('haz clic en la regla'))), 'Spanish screen wording');
     await p.evaluate(() => window.__dbg.predictCm(20)); await press(p, 'fire'); await idle(p);
     const cell = await p.evaluate(() => window.__dbg.panel.spec.blocks.find((b) => b.table).table.rows[0][1]);
@@ -106,8 +109,8 @@ export default (test) => {
     ok(await p.evaluate(() => window.__dbg.panel.spec.blocks.some((b) => b.p && b.p.includes('Zack_Hawley'))), 'the model credit is in Options');
     await press(p, 'restart'); eq((await st(p)).phase, 'test', 'one tap only asks to confirm');
     await press(p, 'restart');
-    const s = await st(p);
-    eq([s.phase, s.planKey, s.data, s.predCm, s.cannonX, s.optionsOpen], ['try', null, {}, null, 0, false], 'back to "Try it" with an empty table');
+    await idle(p); const s = await st(p);
+    eq([s.phase, s.planKey, s.data, s.predCm, Math.abs(s.cannonX) < 1e-6, s.optionsOpen], ['try', null, {}, null, true, false], 'back to "Try it" with an empty table, the cannon rolled back to 0');
     ok(await p.evaluate(() => !window.__dbg.L.predFlag.visible && window.__dbg.L.ghosts.length === 0), 'no flags left on the track');
     await p.close();
     const q = await page();

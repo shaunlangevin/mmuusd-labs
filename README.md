@@ -20,6 +20,15 @@ Interactive physics labs for the district's Quest 3 headsets (WebXR, passthrough
 
 **Options → Start over (next pair)** clears everything for the next students; it takes two taps, so it can't happen by accident.
 
+**In the headset**
+
+- **Firing:** students pull the lanyard handle. They can grab it with the controller's grip button, pinch it or pull the trigger at the handle, point at it from a distance, or grab it with a closed hand when hand tracking is on. A firm 12 cm tug fires; the handle lights up when a hand is close enough to grab it.
+- **Start line:** before every shot the cannon rolls back to the start line (0 cm), the way a crew pushed it back after recoil. Pressing Fire or pulling the lanyard during the roll-back fires as soon as it arrives.
+- **The ball:** it hits the sandbags, falls, bounces and rolls to a stop, and stays there until the next shot.
+- **Powder:** cloth cartridge bags of 0.4 kg each, as in the Civil War, with a powder keg beside them. Three bags (1.2 kg) is about a real 12-pounder's full charge.
+- **The panel:** it floats like a whiteboard above the lab, or beside it on the right when that would be too high, so it never covers the cannon. Its bottom edge stays put when its content changes, so buttons don't move under the pointer.
+- **Staying in place:** the lab is pinned to the real room with a WebXR anchor, and a copy is saved on the headset. If the headset loses the anchor (for example after it is taken off to write), the lab comes back to the same spot from that copy. The copy's reference code is kept only in memory.
+
 ## Link settings (ArborXR WebXR link)
 
 | Setting | Example | What it does |

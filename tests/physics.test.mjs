@@ -1,6 +1,7 @@
 // The physics model on its own: the numbers the design promises, and that each variable does what it should.
 import { ok, near } from './lib/helpers.mjs';
 import { shot, trial, DEFAULTS, VARS, challengeTarget, onTheLine } from '../js/physics.js';
+import { handGrabbing } from '../js/grab.js';
 
 const cm = (s) => shot(s).d * 100;
 const with_ = (k, id) => ({ ...DEFAULTS, [k]: id });
@@ -41,5 +42,14 @@ export default (test) => {
       near(cm(t.settings), t.cm, 0.6, 'the settings that make the target');
     }
     ok(onTheLine(52, 50) && !onTheLine(58, 50) && onTheLine(17, 15), 'tolerance: ±10% or ±4 cm');
+  });
+
+  test('hand grip: a closed hand counts as gripping, an open or pinching hand does not', async () => {
+    const at = (d) => ({ x: d, y: 0, z: 0 });
+    const hand = (i, m, r) => ({ 'middle-finger-metacarpal': at(0), 'index-finger-tip': at(i), 'middle-finger-tip': at(m), 'ring-finger-tip': at(r) });
+    ok(handGrabbing(hand(0.035, 0.03, 0.035)), 'fist');
+    ok(!handGrabbing(hand(0.09, 0.095, 0.09)), 'open hand');
+    ok(!handGrabbing(hand(0.06, 0.095, 0.09)), 'pinch (only the index curls) is not a grip');
+    ok(handGrabbing(hand(0.065, 0.065, 0.06), true) && !handGrabbing(hand(0.065, 0.065, 0.06), false), 'it holds on until the hand clearly opens');
   });
 };

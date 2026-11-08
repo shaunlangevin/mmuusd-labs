@@ -7,6 +7,7 @@ import { LabPanel, Loupe } from './ui3d.js';
 import { buildLab, MUZZLE, BACKSTOP_X, BALL_R, RULER_Z, RULER_CM, VENT, WHEEL_R } from './scene.js';
 import { VARS, VAR_KEYS, DEFAULTS, level, shot, trial, challengeTarget, onTheLine, G } from './physics.js';
 import { unlockAudio, boom } from './audio.js';
+import { handGrabbing } from './grab.js';
 
 const $ = (id) => document.getElementById(id);
 const params = new URLSearchParams(location.search);
@@ -137,6 +138,7 @@ function tableBlock() {
 }
 function testStep() {
   const t = T(), n = countFor(curLevel().id);
+  if (anim && anim.kind === 'return') return t.rollingBack;
   if (allRowsDone()) return t.allDone;
   if (n >= 3) return t.stepRowDone + ' ' + t.stepPick;
   const screen = mode === 'desktop', fireStep = screen || !S.lanyard ? t.stepFireScreen : t.stepFire;
@@ -145,7 +147,7 @@ function testStep() {
   return fireStep;
 }
 function testSpec() {
-  const t = T(), busy = !!anim;
+  const t = T(), busy = !!anim && anim.kind !== 'return';
   const lvRow = { row: levels(planKey).map((l, i) => ({ id: 'level:' + i, label: (countFor(l.id) >= 3 ? '✓ ' : '') + t.levels[l.id], sel: i === test.levelIdx, disabled: busy })), h: 84 };
   const canFire = !busy && test.predFor === curLevel().id && countFor(curLevel().id) < 3;
   return { kicker: t.labTitle, title: `${t.testing} ${t.vars[planKey]}`, blocks: [
@@ -158,7 +160,7 @@ function testSpec() {
   ] };
 }
 function challengeSpec() {
-  const t = T(), busy = !!anim, blocks = [{ p: t.chBody(ch.target.cm) }];
+  const t = T(), busy = !!anim && anim.kind !== 'return', blocks = [{ p: t.chBody(ch.target.cm) }];
   for (const k of VAR_KEYS) {
     blocks.push({ p: t.vars[k], style: 'label', after: 6 });
     blocks.push({ row: levels(k).map((l) => ({ id: `set:${k}:${l.id}`, label: t.levels[l.id], sel: settings[k] === l.id, disabled: busy })), h: 70, after: 10 });
@@ -200,8 +202,10 @@ function optionsSpec() {
   return { kicker: t.labTitle, title: t.options, blocks };
 }
 function refresh() {
+  const z0 = panel.zoom;
   panel.setZoom(S.big ? 1.3 : 1);
   panel.show(panelSpec());
+  if (mode !== 'desktop' && dock && panel.zoom !== z0) layoutPanel(false);   // Bigger text: find a new dock for the bigger panel
   document.body.classList.toggle('big-text', S.big);
 }
 
@@ -218,7 +222,7 @@ function onButton(id) {
   if (a === 'size') { setSize(b); return refresh(); }
   if (a === 'acc') { S[b] = !S[b]; syncPage(); updateLoupe(); return refresh(); }
   if (a === 'move') { optionsOpen = false; refresh(); return replace(); }
-  if (a === 'exit') { renderer.xr.getSession()?.end(); return; }
+  if (a === 'exit') { forgetHandle(); renderer.xr.getSession()?.end(); return; }
   if (a === 'fire') return fire();
   if (a === 'q3') { q3Answer = b; phase = 'watch'; return startReplay(true); }
   if (a === 'replay') return startReplay(phase === 'answer' || test.arrows || phase === 'challenge');
@@ -226,14 +230,14 @@ function onButton(id) {
   if (a === 'toPlan') { phase = 'plan'; resetShots(); return refresh(); }
   if (a === 'plan') { planKey = b; return refresh(); }
   if (a === 'startTest') return startTest();
-  if (a === 'level') { test.levelIdx = +b; test.predCm = null; test.predFor = null; L.predFlag.visible = false; loupe.mesh.visible = false; applySettings(settingsForTest()); return refresh(); }
+  if (a === 'level') { test.levelIdx = +b; test.predCm = null; test.predFor = null; L.predFlag.visible = false; loupe.mesh.visible = false; applySettings(settingsForTest()); rollBack(); return refresh(); }
   if (a === 'arrows') { test.arrows = !test.arrows; return refresh(); }
   if (a === 'backPlan') { phase = 'plan'; resetShots(); return refresh(); }
   if (a === 'explain') { phase = 'explain'; resetShots(); return refresh(); }
   if (a === 'testOther') { phase = 'plan'; if (!S.lock) planKey = null; test.data = {}; return refresh(); }
   if (a === 'challenge' || a === 'newTarget') return startChallenge();
   if (a === 'backExplain') { phase = 'explain'; resetShots(); L.target.visible = false; applySettings({ ...DEFAULTS }); return refresh(); }
-  if (a === 'set') { settings[b] = c; applySettings(settings); ch.result = null; return refresh(); }
+  if (a === 'set') { settings[b] = c; applySettings(settings); ch.result = null; rollBack(); return refresh(); }
 }
 // "Start over": a fresh lab for the next pair (the table and predictions are cleared; nothing was saved anyway)
 function startOver() {
@@ -251,16 +255,27 @@ function startTest() {
   resetShots(); applySettings(settingsForTest()); refresh();
 }
 function startChallenge() {
-  phase = 'challenge'; resetShots();
   let tg; do { tg = challengeTarget(rand); } while (ch.target && tg.cm === ch.target.cm);
   ch.target = tg; ch.result = null;
+  phase = 'challenge'; resetShots();
   settings = { ...DEFAULTS }; applySettings(settings);
   L.target.position.x = -tg.cm / 100; L.target.visible = true;
   refresh();
 }
 function resetShots() {
   anim = null; lastShot = null; L.clearGhosts(); L.predFlag.visible = false; loupe.mesh.visible = false;
-  hideArrows(); L.setCannonX(0, wheels); L.ball.visible = false; L.target.visible = phase === 'challenge';
+  hideArrows(); L.ball.visible = false; L.target.visible = phase === 'challenge';
+  rollBack();
+}
+// Before every shot the cannon goes back to the start line (0 on the ruler), the way a gun crew pushed it back
+// "into battery" after it recoiled. It rolls there (wheels turning), so students see every shot start from 0.
+function rollBack(then = null) {
+  if (Math.abs(L.cannonX) < 0.003) { L.setCannonX(0, wheels); if (then) then(); return false; }
+  loupe.mesh.visible = false; L.ball.visible = false; hideArrows();
+  const from = L.cannonX;
+  anim = { kind: 'return', t: 0, from, dur: Math.min(1.4, 0.5 + Math.abs(from) * 0.8), then };
+  refresh();
+  return true;
 }
 function applySettings(st) { settings = { ...st }; L.showSettings(settings, T()); sizeLabels(); }
 function relabel() {
@@ -274,14 +289,21 @@ function relabel() {
 
 // ═════════════ firing ═════════════
 function fire() {
+  if (anim && anim.kind === 'return') { anim.then = fireNow; return; }   // Fire during the roll-back: it fires as soon as it's at 0
   if (anim) return;
   if (phase === 'test' && (test.predFor !== curLevel().id || countFor(curLevel().id) >= 3)) return;
+  if (rollBack(fireNow)) return;   // back to the start line first, then fire
+  fireNow();
+}
+let shotStartX = 0;
+function fireNow() {
+  shotStartX = L.cannonX;
   const st = phase === 'test' ? settingsForTest() : { ...settings };
   const r = trial(st, rand);
   lastShot = { st, r, cm: r.d * 100, forLevel: phase === 'test' ? curLevel().id : null, n: 0 };
   L.setCannonX(0, wheels); hideArrows(); loupe.mesh.visible = false;
   anim = { kind: 'live', t: 0, rec: lastShot, playing: true, smoked: false };
-  boom({ calm: S.calm, size: r.scoops });
+  boom({ calm: S.calm, size: r.bags });
   triesFired++;
   refresh();
 }
@@ -302,12 +324,28 @@ function shotDone(rec) {
 function updateLoupe() { if (lastShot) loupe.set(Math.max(0, -L.cannonX * 100), S.num, phase === 'test' ? test.predCm : phase === 'challenge' ? ch.target?.cm : null, phase === 'challenge' ? '#2fae5a' : '#2f7de1'); }
 function hideArrows() { for (const a of Object.values(L.arrows)) a.visible = false; }
 
+// After the ball hits the sandbags it loses almost all its speed, bounces back a little, falls under gravity,
+// thumps onto the ground, bounces once or twice and rolls to a stop. (Real time τ seconds after it hits.)
+const BALL_HIT = { x: BACKSTOP_X - BALL_R, y: MUZZLE.y };
+const BALL_PATH = (() => {   // pre-computed, 1/240 s steps, about 2 s
+  const pts = [], dt = 1 / 240; let x = BALL_HIT.x, y = BALL_HIT.y, vx = -0.7, vy = 0, rolling = false;
+  for (let i = 0; i < 480; i++) {
+    pts.push([x, y]);
+    if (!rolling) {
+      vy -= G * dt; x += vx * dt; y += vy * dt;
+      if (y <= BALL_R) { y = BALL_R; vy = -vy * 0.28; vx *= 0.7; if (vy < 0.25) { rolling = true; vy = 0; } }
+    } else { const s = Math.sign(vx); vx -= s * 1.6 * dt; if (Math.sign(vx) !== s) vx = 0; x += vx * dt; }
+  }
+  return pts;
+})();
+const ballAt = (tau) => BALL_PATH[Math.max(0, Math.min(BALL_PATH.length - 1, Math.round(tau * 240)))];
+const BALL_SETTLE = 1.6;   // seconds until it lies still
 // cannon position during the roll (real time τ seconds after the push)
 function rollX(r, tau) { const a = r.mu * G, tt = Math.min(tau, r.tStop); return -(r.vCannon * tt - 0.5 * a * tt * tt); }
 
 // slow motion timeline (seconds of replay): pause → push → flight → roll → hold
 const RP = { pause: 0.6, push: 1.6, flight: 0.9, roll: 4 };
-const replayLen = (r) => RP.pause + RP.push + RP.flight + r.tStop * RP.roll + 0.8;
+const replayLen = (r) => RP.pause + RP.push + RP.flight + Math.max(r.tStop, BALL_SETTLE * 0.6) * RP.roll + 0.8;
 function replayRealTime(t, rec) {   // the real-world time this frame shows
   const r = rec.r, P0 = RP.pause, P1 = P0 + RP.push, P2 = P1 + RP.flight;
   if (t < P0) return 0;
@@ -322,12 +360,11 @@ function poseReplay(t, rec, withArrows) {
   L.ball.visible = true;
   if (t < P0) { cx = 0; L.ball.visible = false; }
   else if (t < P1) { const f = (t - P0) / RP.push, e = f * f; cx = kick * e; L.ball.position.set(-0.5 + (MUZZLE.x + 0.5) * e, MUZZLE.y, 0); }
-  else if (t < P2) { const f = (t - P1) / RP.flight; cx = kick; L.ball.position.set(MUZZLE.x + (BACKSTOP_X - BALL_R - MUZZLE.x) * f, MUZZLE.y, 0); }
+  else if (t < P2) { const f = (t - P1) / RP.flight; cx = kick; L.ball.position.set(MUZZLE.x + (BALL_HIT.x - MUZZLE.x) * f, MUZZLE.y, 0); }
   else {
     const tau = (t - P2) / RP.roll, full = rollX(r, r.tStop) || -1e-6;
     cx = kick + rollX(r, tau) * ((full - kick) / full);   // ends exactly where the real shot stopped
-    const drop = Math.min(1, (t - P2) / 0.6);
-    L.ball.position.set(BACKSTOP_X - BALL_R - 0.1 * drop, MUZZLE.y - (MUZZLE.y - BALL_R) * drop * drop, 0);
+    const [bx, by] = ballAt((t - P2) / RP.roll); L.ball.position.set(bx, by, 0);
   }
   L.setCannonX(cx, wheels);
   hideArrows();
@@ -345,7 +382,7 @@ function poseReplay(t, rec, withArrows) {
 }
 
 function startReplay(withArrows) {
-  if (!lastShot || (anim && anim.kind === 'live')) return;
+  if (!lastShot || (anim && anim.kind !== 'replay')) return;
   anim = { kind: 'replay', t: 0, rec: lastShot, playing: true, arrows: withArrows };
   loupe.mesh.visible = false;
   refresh();
@@ -362,7 +399,8 @@ function replayControl(cmd) {
   refresh();
 }
 function endReplay() {
-  const rec = anim?.rec; anim = null; hideArrows(); L.ball.visible = false;
+  const rec = anim?.rec; anim = null; hideArrows();
+  if (rec) { const [bx, by] = ballAt(BALL_SETTLE); L.ball.position.set(bx, by, 0); }
   if (rec) L.setCannonX(rollX(rec.r, rec.r.tStop), wheels);
   if (phase === 'watch') phase = 'answer';
   if (rec && (phase === 'test' || phase === 'challenge')) { loupe.mesh.visible = true; updateLoupe(); }
@@ -372,13 +410,20 @@ function endReplay() {
 let panelTick = 0;
 function updateAnim(dt) {
   if (!anim) return;
+  if (anim.kind === 'return') {
+    anim.t += dt;
+    const f = Math.min(1, anim.t / anim.dur), e = f * f * (3 - 2 * f);
+    L.setCannonX(anim.from * (1 - e), wheels);
+    if (f >= 1) { const then = anim.then; anim = null; L.setCannonX(0, wheels); if (then) then(); else refresh(); }
+    return;
+  }
   if (anim.kind === 'live') {
     const r = anim.rec.r;
     anim.t += dt;
     // ball: a streak from the muzzle to the sandbags for a moment, then it lies at their foot
     L.ball.visible = true;
-    if (anim.t < 0.08) L.ball.position.set(MUZZLE.x + (BACKSTOP_X - BALL_R - MUZZLE.x) * Math.min(1, anim.t / 0.03), MUZZLE.y, 0);
-    else L.ball.position.set(BACKSTOP_X - BALL_R - 0.1, BALL_R, 0);
+    if (anim.t < 0.03) L.ball.position.set(MUZZLE.x + (BALL_HIT.x - MUZZLE.x) * (anim.t / 0.03), MUZZLE.y, 0);
+    else { const [bx, by] = ballAt(anim.t - 0.03); L.ball.position.set(bx, by, 0); }
     L.setCannonX(rollX(r, anim.t), wheels);
     hideArrows();
     if (test.arrows && phase === 'test') {
@@ -387,7 +432,7 @@ function updateAnim(dt) {
       else if (anim.t < r.tStop) { const A = L.arrows.friction; A.visible = true; A.setLength(anim.rec.st.wheels === 'blocked' ? 1 : 0.55); A.position.set(L.cannonX - WHEEL_R * 0.2, 0.12, 1.02); }
     }
     if (!S.calm && !anim.smoked) { anim.smoked = true; startSmoke(); }
-    if (anim.t > Math.max(r.tStop, 0.3) + 0.35) { const rec = anim.rec; anim = null; hideArrows(); L.ball.visible = false; shotDone(rec); }
+    if (anim.t > Math.max(r.tStop, BALL_SETTLE) + 0.2) { const rec = anim.rec; anim = null; hideArrows(); shotDone(rec); }   // the ball stays where it landed
   } else if (anim.kind === 'replay') {
     if (anim.playing) {
       anim.t += dt;
@@ -465,33 +510,85 @@ function setLabAt(spot) {
 }
 function startPlacing() { placing = true; hint.show({ blocks: [{ p: T().placeFloor, style: 'em', after: 0 }] }); hint.mesh.visible = true; lab.visible = false; dropAnchor(); }
 function replace() { if (mode === 'desktop') return; if (S.size === 'desk') placeDesk(); else startPlacing(); }
-// the main panel floats to the student's front-right; it comes back if they turn away for a while
-let panelGoal = null, awayFor = 0;
-function panelSpot() {
-  const C = camera.position, f = headForward(), r = new THREE.Vector3().crossVectors(f, UP).normalize();
-  const desk = S.size === 'desk';
-  return C.clone().addScaledVector(f, desk ? 0.56 : 0.85).addScaledVector(r, desk ? 0.44 : 0.62).setY(C.y - (desk ? 0.08 : 0.05));
+// The main panel is docked like a whiteboard ABOVE the lab, so it never covers the cannon while students watch:
+// we find how high the lab reaches in the student's view and put the panel's bottom edge just above that.
+// If that would be too high to read comfortably (life size, close up), it docks beside the lab on the right.
+// It only moves again when the student walks somewhere else (or the lab is placed again).
+let panelGoal = null, dockedFrom = null;
+const LAB_SAMPLES = (() => {   // points around the whole setup, in lab (real-life) metres: trail end with recoil … sandbags, arrows on top
+  const pts = [];
+  for (const x of [-3.8, -2.4, -1.2, 0, 0.9, 2.0, 3.0]) for (const z of [-1.0, 1.4]) for (const y of [0, 1.5, 1.8]) pts.push(new THREE.Vector3(x, y, z));
+  return pts;
+})();
+// dock = where the panel's bottom edge sits ("above") or its top edge ("side"); the panel grows away from that
+// edge when its content changes, so buttons never slide around under the student's pointer.
+let dock = null;
+function panelDock() {
+  const C = camera.position, desk = S.size === 'desk';
+  const centre = lab.localToWorld(new THREE.Vector3(-0.35, 0.4, 0.2));
+  const u = centre.clone().sub(C).setY(0).normalize();                        // looking at the lab
+  const d = desk ? 0.78 : S.size === 'half' ? 1.05 : 1.15;                    // how far away the panel floats
+  const tallest = panel.mW * 1050 / panel.canvas.width * panel.zoom * panel.base;   // the tallest screen
+  const halfW = Math.atan((panel.mW * panel.zoom * panel.base) / 2 / d);
+  let top = -Infinity, right = 0;
+  for (const q of LAB_SAMPLES) {
+    const w = lab.localToWorld(q.clone()), v = w.clone().sub(C), h = Math.hypot(v.x, v.z);
+    top = Math.max(top, Math.atan2(v.y, h));
+    const vh = v.setY(0).normalize(), side = -Math.atan2(new THREE.Vector3().crossVectors(u, vh).y, u.dot(vh));   // + = to the right
+    right = Math.max(right, side);
+  }
+  const bottom = Math.max(-0.3, top + 0.05);                                   // bottom edge just above the lab
+  const topOfTallest = Math.atan2(d * Math.sin(bottom) + tallest, d * Math.cos(bottom));
+  if (topOfTallest < 0.62) {   // above the lab, straight ahead, low enough to read comfortably
+    return { kind: 'above', p: C.clone().add(u.clone().multiplyScalar(d * Math.cos(bottom))).setY(C.y + d * Math.sin(bottom)) };
+  }
+  const yaw = Math.min(1.25, right + 0.08 + halfW);                            // otherwise beside it, on the right
+  const dir = u.clone().applyAxisAngle(UP, -yaw);
+  return { kind: 'side', p: C.clone().addScaledVector(dir, d).setY(C.y + 0.2) };
+}
+// for tests: does the panel overlap the lab in the student's view? (angular boxes, radians)
+function angBox(points) {
+  const C = camera.position, centre = lab.localToWorld(new THREE.Vector3(-0.35, 0.4, 0.2)), u = centre.clone().sub(C).setY(0).normalize();
+  let x0 = Infinity, x1 = -Infinity, y0 = Infinity, y1 = -Infinity;
+  for (const w of points) {
+    const v = w.clone().sub(C), h = Math.hypot(v.x, v.z), el = Math.atan2(v.y, h);
+    const vh = v.setY(0).normalize(), side = -Math.atan2(new THREE.Vector3().crossVectors(u, vh).y, u.dot(vh));
+    x0 = Math.min(x0, side); x1 = Math.max(x1, side); y0 = Math.min(y0, el); y1 = Math.max(y1, el);
+  }
+  return { x0, x1, y0, y1 };
+}
+function panelOverlap() {
+  const labB = angBox(LAB_SAMPLES.map((q) => lab.localToWorld(q.clone())));
+  panel.mesh.updateMatrixWorld(true);
+  const W = panel.mW / 2, H = panel.mW * panel.canvas.height / panel.canvas.width / 2;
+  const pb = angBox([[-W, -H], [W, -H], [-W, H], [W, H]].map(([x, y]) => panel.mesh.localToWorld(new THREE.Vector3(x, y, 0))));
+  const ox = Math.min(labB.x1, pb.x1) - Math.max(labB.x0, pb.x0), oy = Math.min(labB.y1, pb.y1) - Math.max(labB.y0, pb.y0);
+  return { overlap: ox > 0.01 && oy > 0.01, dock: dock?.kind, lab: labB, panel: pb };
+}
+function panelPosFromDock() {
+  const h = panel.heightM();
+  return dock.p.clone().setY(dock.p.y + (dock.kind === 'above' ? h / 2 : -h / 2));
 }
 function layoutPanel(instant) {
   if (mode === 'desktop') return;
-  panelGoal = panelSpot();
-  if (instant) { panel.mesh.position.copy(panelGoal); panelGoal = null; }
-  panel.mesh.lookAt(camera.position);
   panel.setBase(S.size === 'desk' ? 0.72 : 0.95);
+  dock = panelDock(); dockedFrom = camera.position.clone().setY(0);
+  panelGoal = instant ? null : true;
+  if (instant) panel.mesh.position.copy(panelPosFromDock());
+  panel.mesh.lookAt(camera.position);
 }
 function followPanel(dt) {
   if (mode === 'desktop') return;
-  const C = camera.position, f = headForward();
-  const to = panel.mesh.position.clone().sub(C).setY(0); const d = to.length();
-  const off = d > 0.01 ? f.angleTo(to.normalize()) : 0;
-  awayFor = (off > 1.15 || d > 2.2) && !panelGoal ? awayFor + dt : 0;
-  if (awayFor > 1.5) { awayFor = 0; panelGoal = panelSpot(); }
-  if (panelGoal) {
-    panel.mesh.position.lerp(panelGoal, 1 - Math.exp(-dt * (S.calm ? 2.5 : 5)));
-    if (panel.mesh.position.distanceTo(panelGoal) < 0.01) panelGoal = null;
-  }
+  panel.mesh.visible = lab.visible && !placing;
+  if (!lab.visible || !dock) return;
+  const C = camera.position;
+  if (dockedFrom && C.clone().setY(0).distanceTo(dockedFrom) > 0.6) layoutPanel(false);   // the student walked: dock again from here
+  const goal = panelPosFromDock();
+  if (panelGoal) {   // gliding to a new dock
+    panel.mesh.position.lerp(goal, 1 - Math.exp(-dt * (S.calm ? 2.5 : 5)));
+    if (panel.mesh.position.distanceTo(goal) < 0.01) panelGoal = null;
+  } else panel.mesh.position.copy(goal);
   panel.mesh.lookAt(C);
-  // keep the panel's top edge where it is when its height changes
 }
 // the lanyard handle: always within reach, in front of the student and a little to the right
 let handleLocal = new THREE.Vector3(1.0, 0.9, 2.2);
@@ -513,7 +610,7 @@ function updateRope() {
   const showHandle = S.lanyard && !optionsOpen && (phase === 'try' || phase === 'test' || phase === 'challenge');
   L.handle.visible = L.rope.visible = showHandle;
   L.handle.userData.glow.visible = showHandle && !anim && !S.calm ? true : showHandle && !anim;
-  L.handle.userData.glow.material.opacity = S.calm ? 0.16 : 0.12 + 0.1 * Math.sin(performance.now() / 300);
+  L.handle.userData.glow.material.opacity = handleNear || pull ? 0.45 : S.calm ? 0.16 : 0.12 + 0.1 * Math.sin(performance.now() / 300);
 }
 // loupe: floats over the stopping point, facing the student
 function placeLoupe() {
@@ -541,8 +638,41 @@ for (let i = 0; i < 2; i++) {
   c.addEventListener('disconnected', () => { c.userData.hitSrc?.cancel?.(); c.userData.hitSrc = null; c.userData.src = null; });
   c.addEventListener('selectstart', () => onSelectStart(c));
   c.addEventListener('selectend', () => onSelectEnd(c));
+  c.addEventListener('squeezestart', () => onSqueezeStart(c));   // the grip button
+  c.addEventListener('squeezeend', () => onSqueezeEnd(c));
   scene.add(c); controllers.push(c);
 }
+// tracked hands: students can grab the lanyard handle with a closed hand (a fist), not only pinch it
+const hands = [0, 1].map((i) => { const h = renderer.xr.getHand(i); h.userData = { grabbing: false }; scene.add(h); return h; });
+const REACH = 0.15;   // metres: how close a hand or controller must be to the handle to grab it directly
+const handleWorld = () => L.handle.getWorldPosition(new THREE.Vector3());
+const canPull = () => L.handle.visible && idleOrRollingBack() && !placing && !optionsOpen;
+const ctrlPos = (c) => new THREE.Vector3().setFromMatrixPosition(c.matrixWorld);
+function startPull(getPos) { pull = { getPos, start: getPos().clone() }; }
+function onSqueezeStart(c) {
+  if (!renderer.xr.isPresenting || !canPull()) return;
+  unlockAudio(); setRayFrom(c);
+  if (ctrlPos(c).distanceTo(handleWorld()) < REACH || handleHit()) { startPull(() => ctrlPos(c)); pull.c = c; }
+}
+function onSqueezeEnd(c) { if (pull && pull.c === c) { pull = null; L.handle.position.copy(handleLocal); } }
+const jointPos = (h, name) => { const j = h.joints && h.joints[name]; return j && j.visible !== false ? j.getWorldPosition(new THREE.Vector3()) : null; };
+function updateHands() {
+  let near = false;
+  for (const h of hands) {
+    const names = ['wrist', 'middle-finger-metacarpal', 'index-finger-tip', 'middle-finger-tip', 'ring-finger-tip'];
+    const J = {}; for (const n of names) { const p = jointPos(h, n); if (p) J[n] = p; }
+    const palm = J['middle-finger-metacarpal'] || J.wrist;
+    if (!palm) { h.userData.grabbing = false; continue; }
+    const g = handGrabbing(J, h.userData.grabbing), was = h.userData.grabbing; h.userData.grabbing = g;
+    const close = canPull() && palm.distanceTo(handleWorld()) < REACH;
+    near = near || close;
+    if (g && !was && close && !pull) { unlockAudio(); startPull(() => jointPos(h, 'middle-finger-metacarpal') || jointPos(h, 'wrist') || palm); pull.hand = h; }
+    if (!g && was && pull && pull.hand === h) { pull = null; L.handle.position.copy(handleLocal); }
+  }
+  for (const c of controllers) if (c.userData.src && c.userData.src.targetRayMode === 'tracked-pointer' && canPull() && ctrlPos(c).distanceTo(handleWorld()) < REACH) near = true;
+  handleNear = near;
+}
+let handleNear = false;
 function onConnected(c, src) {
   c.userData.src = src;
   c.userData.line.visible = src.targetRayMode === 'tracked-pointer';
@@ -557,9 +687,11 @@ function setRayFrom(c) {
   raycaster.far = 12;
 }
 const panelHit = () => raycaster.intersectObject(panel.mesh, false)[0] || null;
-const handleHit = () => (L.handle.visible && !anim ? raycaster.intersectObject(L.handle.userData.glow, false)[0] : null);
-const trackHit = () => (phase === 'test' && !anim && countFor(curLevel().id) < 3 ? raycaster.intersectObject(L.track, false)[0] : null);
+const idleOrRollingBack = () => !anim || anim.kind === 'return';
+const handleHit = () => (L.handle.visible && idleOrRollingBack() ? raycaster.intersectObject(L.handle.userData.glow, false)[0] : null);
+const trackHit = () => (phase === 'test' && idleOrRollingBack() && countFor(curLevel().id) < 3 ? raycaster.intersectObject(L.track, false)[0] : null);
 let pull = null, drag = null;   // pulling the lanyard; dragging the prediction flag
+let heightMoved = 0;
 function onSelectStart(c) {
   if (!renderer.xr.isPresenting) return;
   unlockAudio();
@@ -567,7 +699,7 @@ function onSelectStart(c) {
   const ph = panel.mesh.visible ? panelHit() : null;
   if (ph) { c.userData.pressed = panel.buttonAt(ph.uv); return; }
   if (placing) { if (c.userData.target) finishPlacing(c.userData.target.clone()); return; }
-  if (handleHit()) { pull = { c, start: new THREE.Vector3().setFromMatrixPosition(c.matrixWorld) }; return; }
+  if (canPull() && (handleHit() || ctrlPos(c).distanceTo(handleWorld()) < REACH)) { startPull(() => ctrlPos(c)); pull.c = c; return; }
   const th = trackHit(); if (th) { drag = { c }; setPrediction(th.point); }
 }
 function onSelectEnd(c) {
@@ -590,7 +722,7 @@ function setPrediction(worldPoint) {
 }
 function updatePull() {
   if (!pull) return;
-  const now = new THREE.Vector3().setFromMatrixPosition(pull.c.matrixWorld);
+  const now = pull.getPos();
   L.handle.position.copy(lab.worldToLocal(now.clone()));
   if (now.distanceTo(pull.start) > 0.12) {   // a firm tug (12 cm) fires the cannon
     pull = null; L.handle.position.copy(handleLocal);
@@ -617,8 +749,7 @@ function finishPlacing(target) { placing = false; reticle.visible = false; hint.
 function xrUpdate(frame, dt) {
   xrFrames++;
   if (needsLayout && xrFrames > 3) { needsLayout = false; replace(); layoutPanel(true); }
-  if (wantAnchor) makeAnchor(frame);
-  followAnchor(frame);
+  anchorTick(frame);
   for (const c of controllers) {
     const u = c.userData; if (!u.src) { u.dot.visible = false; continue; }
     setRayFrom(c);
@@ -639,8 +770,12 @@ function xrUpdate(frame, dt) {
     hint.mesh.position.copy(camera.position).addScaledVector(headForward(), 1.0).setY(camera.position.y + 0.05);
     hint.mesh.lookAt(camera.position);
   } else if (S.size === 'desk') {   // desk size: the right thumbstick raises or lowers the lab to sit on the real desk
-    for (const c of controllers) { const gp = c.userData.src?.gamepad; const y = gp && gp.axes.length >= 4 ? gp.axes[3] : 0; if (Math.abs(y) > 0.3) { lab.position.y -= y * dt * 0.25; } }
+    let moved = false;
+    for (const c of controllers) { const gp = c.userData.src?.gamepad; const y = gp && gp.axes.length >= 4 ? gp.axes[3] : 0; if (Math.abs(y) > 0.3) { lab.position.y -= y * dt * 0.25; moved = true; } }
+    if (moved) heightMoved = performance.now();
+    else if (heightMoved && performance.now() - heightMoved > 600) { heightMoved = 0; wantAnchor = true; }   // pin the new height
   }
+  updateHands();
   updatePull();
   followPanel(dt);
 }
@@ -675,9 +810,24 @@ renderer.domElement.addEventListener('pointerup', (e) => {
   if (handleHit()) { if (phase !== 'test' || test.predFor === curLevel().id) fire(); }
 });
 
-// ═════════════ anchors: keep the lab fixed to the real room if the headset recentres ═════════════
+// ═════════════ anchors: keep the lab fixed to the real room ═════════════
+// An anchor is a spot the headset tracks in the real room, so the lab stays on the same desk or patch of floor
+// even when the headset recentres. Taking the headset off (to write) can make it lose an anchor for good, so,
+// as in the artifact viewer, each anchor is also saved on the headset ("persistent anchor") and restored from
+// that copy if it stops being tracked for 2 seconds. Only the anchor's random reference code is kept, and only
+// in memory for this visit: nothing is written to the browser's storage.
 let anchor = null, anchorLast = null, wantAnchor = false, anchorGen = 0;
-function dropAnchor() { anchorGen++; wantAnchor = false; if (anchor) { try { anchor.delete(); } catch { /* gone */ } } anchor = null; anchorLast = null; }
+let anchorHandle = null, anchorLostAt = 0, anchorWait = null;
+const dbg = { anchor: 'none', saved: false, restores: 0, replaced: 0 };
+function forgetHandle() {   // tidy up the saved copy on the headset
+  const h = anchorHandle; anchorHandle = null; dbg.saved = false;
+  if (h) renderer.xr.getSession()?.deletePersistentAnchor?.(h).catch(() => {});
+}
+function dropAnchor() {
+  anchorGen++; wantAnchor = false; anchorWait = null;
+  if (anchor) { try { anchor.delete(); } catch { /* gone */ } }
+  anchor = null; anchorLast = null; anchorLostAt = 0; forgetHandle(); dbg.anchor = 'none';
+}
 async function makeAnchor(frame) {
   wantAnchor = false;
   const ref = renderer.xr.getReferenceSpace();
@@ -687,26 +837,70 @@ async function makeAnchor(frame) {
   try {
     const a = await frame.createAnchor(new XRRigidTransform({ x: P.x, y: P.y, z: P.z }, { x: q.x, y: q.y, z: q.z, w: q.w }), ref);
     if (gen !== anchorGen) { a.delete(); return; }
-    anchor = a; anchorLast = null;
-  } catch (e) { console.warn('anchor not available', e); }
+    anchor = a; anchorLast = null; dbg.anchor = 'ok';
+    if (a.requestPersistentHandle) {
+      try { const h = await a.requestPersistentHandle(); if (gen === anchorGen) { anchorHandle = h; dbg.saved = true; } else renderer.xr.getSession()?.deletePersistentAnchor?.(h).catch(() => {}); }
+      catch (e) { console.warn('could not save the anchor', e); }
+    }
+  } catch (e) { console.warn('anchor not available', e); dbg.anchor = 'failed'; }
 }
 function followAnchor(frame) {
   if (!anchor || placing || !frame) return;
   const ref = renderer.xr.getReferenceSpace();
-  if (frame.trackedAnchors && !frame.trackedAnchors.has(anchor)) return;
-  const pose = ref && frame.getPose(anchor.anchorSpace, ref); if (!pose) return;
+  const lost = () => { if (!anchorLostAt) anchorLostAt = performance.now(); };
+  if (frame.trackedAnchors && !frame.trackedAnchors.has(anchor)) return lost();
+  const pose = ref && frame.getPose(anchor.anchorSpace, ref); if (!pose) return lost();
+  anchorLostAt = 0;
   const tp = pose.transform.position, o = pose.transform.orientation;
   const now = { p: new THREE.Vector3(tp.x, tp.y, tp.z), yaw: new THREE.Euler().setFromQuaternion(new THREE.Quaternion(o.x, o.y, o.z, o.w), 'YXZ').y };
-  if (anchorLast) {
+  if (anchorWait) {   // restored from the saved copy: put the lab exactly where it was
+    anchorWait = null; dbg.restores++;
+    lab.position.copy(now.p); lab.rotation.set(0, now.yaw, 0); lab.visible = true;
+    hint.mesh.visible = false; layoutPanel(true); layoutHandle();
+  } else if (anchorLast) {
     const dy = now.yaw - anchorLast.yaw;
-    if (now.p.distanceTo(anchorLast.p) > 0.002 || Math.abs(dy) > 0.002) {   // the room "moved": move the lab and panel with it
+    if (now.p.distanceTo(anchorLast.p) > 0.002 || Math.abs(dy) > 0.002) {   // the room "moved" (recentred): move the lab and panel with it
       for (const obj of [lab, panel.mesh]) {
         const rel = obj.position.clone().sub(anchorLast.p).applyAxisAngle(UP, dy);
         obj.position.copy(now.p).add(rel); obj.rotation.y += dy;
       }
+      if (dock) { dock.p.copy(now.p).add(dock.p.clone().sub(anchorLast.p).applyAxisAngle(UP, dy)); }
+      dockedFrom = camera.position.clone().setY(0);   // dock again only after the student really walks from here
+      panelGoal = null;
+      lastHead = null;
     }
   }
   anchorLast = now;
+}
+// the anchor stopped being tracked for 2 s (the headset slept): reload it from the saved copy
+function recoverAnchor() {
+  const h = anchorHandle, session = renderer.xr.getSession();
+  anchorGen++; anchor = null; anchorLast = null; anchorLostAt = 0;   // leave the lost anchor alone
+  if (!h || !session?.restorePersistentAnchor) { anchorHandle = null; return replaceIfUnpinned('anchor lost'); }
+  const gen = anchorGen;
+  anchorWait = { at: performance.now() };
+  session.restorePersistentAnchor(h).then((a) => {
+    if (gen !== anchorGen) { a.delete(); return; }
+    anchor = a; anchorLast = null; dbg.anchor = 'restored';
+  }).catch((e) => { console.warn('saved anchor could not be restored', e); if (gen === anchorGen) { anchorWait = null; anchorHandle = null; replaceIfUnpinned('restore failed'); } });
+}
+// safety net: nothing is holding the lab and the view jumped (recentred), so place it again in front of the student
+function replaceIfUnpinned() {
+  if (mode !== 'ar' || anchor || anchorWait || placing || needsLayout || !lab.visible) return;
+  dbg.replaced++; replace();
+}
+let lastHead = null;
+function checkHeadJump() {
+  const C = camera.position;
+  if (lastHead && xrFrames > 10 && C.distanceTo(lastHead) > 0.35) replaceIfUnpinned('jump');
+  lastHead = (lastHead || new THREE.Vector3()).copy(C);
+}
+function anchorTick(frame) {
+  if (wantAnchor) makeAnchor(frame);
+  followAnchor(frame);
+  if (anchor && anchorLostAt && !anchorWait && !placing && performance.now() - anchorLostAt > 2000) recoverAnchor();
+  if (anchorWait && performance.now() - anchorWait.at > 6000) { anchorWait = null; anchorHandle = null; replace(); }   // not found: place again
+  checkHeadJump();
 }
 
 // ═════════════ sessions ═════════════
@@ -731,12 +925,14 @@ function onSessionStart() {
   if (mode === 'ar') { scene.background = null; ground.visible = false; renderer.setClearColor(0x000000, 0); }
   else { scene.background = BG; ground.visible = true; }
   lab.visible = false; needsLayout = true; xrFrames = 0; anchor = null; anchorLast = null; wantAnchor = false; anchorGen++;
-  renderer.xr.getReferenceSpace()?.addEventListener?.('reset', () => { if (!anchor && !placing && !needsLayout) replace(); });
+  anchorHandle = null; anchorLostAt = 0; anchorWait = null; lastHead = null;
+  renderer.xr.getReferenceSpace()?.addEventListener?.('reset', () => replaceIfUnpinned('reset'));
+  renderer.xr.getSession()?.addEventListener?.('visibilitychange', () => { lastHead = null; });
   refresh();
 }
 function onSessionEnd() {
   mode = 'desktop'; placing = false; pull = null; drag = null;
-  anchor = null; anchorLast = null; wantAnchor = false; anchorGen++;
+  anchor = null; anchorLast = null; wantAnchor = false; anchorGen++; anchorHandle = null; anchorWait = null;
   scene.background = BG; ground.visible = true; reticle.visible = false; hint.mesh.visible = false;
   controls.enabled = true; layoutDesktop(); onResize(); refresh();
   $('start').hidden = false;
@@ -822,16 +1018,19 @@ L.ready.then((m) => {
 
 // test hooks (used by tests/; harmless otherwise)
 window.__dbg = {
-  THREE, S, L, panel, loupe, hint, camera, lab, scene,
+  THREE, S, L, panel, loupe, hint, camera, lab, scene, controls,
   state: () => ({ phase, optionsOpen, planKey, levelIdx: test.levelIdx, data: JSON.parse(JSON.stringify(test.data)), predCm: test.predCm, predFor: test.predFor,
     anim: anim ? { kind: anim.kind, t: anim.t, playing: anim.playing } : null, cannonX: L.cannonX, mode, placing, size: S.size, lang: S.lang,
-    lastCm: lastShot?.cm ?? null, challenge: ch.target ? { target: ch.target.cm, result: ch.result } : null, settings: { ...settings },
+    lastCm: lastShot?.cm ?? null, shotStartX, challenge: ch.target ? { target: ch.target.cm, result: ch.result } : null, settings: { ...settings },
     panelOverflow: panel.overflow, labVisible: lab.visible, handleVisible: L.handle.visible, loupe: loupe.mesh.visible }),
   press: (id) => onButton(id),
   predictCm: (cm) => setPrediction(lab.localToWorld(new THREE.Vector3(-cm / 100, 0, RULER_Z))),
   handleWorld: () => L.handle.getWorldPosition(new THREE.Vector3()).toArray(),
   trackWorld: (cm) => lab.localToWorld(new THREE.Vector3(-cm / 100, 0, RULER_Z)).toArray(),
   shot, level,
+  ctrls: () => controllers.map((c) => [c.userData.src?.targetRayMode || null, ctrlPos(c).toArray().map((v) => +v.toFixed(3))]), near: () => handleNear,
+  anchorObj: () => anchor, anchorState: () => ({ anchor: !!anchor, saved: !!anchorHandle, waiting: !!anchorWait, ...dbg }),
+  panelHits: () => panelOverlap(),
   seed: (n) => { let a = n >>> 0; rand = () => { a |= 0; a = (a + 0x6D2B79F5) | 0; let t = Math.imul(a ^ (a >>> 15), 1 | a); t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t; return ((t ^ (t >>> 14)) >>> 0) / 4294967296; }; },
 };
 if (DEBUG) console.log('debug on');

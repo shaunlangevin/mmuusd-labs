@@ -101,8 +101,27 @@ export function buildLab(onProgress) {
   const display = new THREE.Group(); display.position.set(1.15, 0, 1.05); lab.add(display);
   const shownBall = new THREE.Mesh(ball.geometry, ballMats.iron); shownBall.position.set(0, BALL_R, 0); display.add(shownBall);
   const ballLabel = { m: null };
-  const bagMat2 = new THREE.MeshStandardMaterial({ color: 0xd8c9a3, roughness: 1 });
-  const bags = [0, 1, 2].map((i) => { const b = new THREE.Mesh(new THREE.CylinderGeometry(0.06, 0.06, 0.16, 12), bagMat2); b.position.set(0.55 + i * 0.16, 0.08, 0); display.add(b); return b; });
+  // Civil War powder came in cloth cartridge bags (wool flannel), tied at the top with twine; loose powder
+  // stayed in a wooden keg. Both are drawn here from simple shapes, with a woven-cloth texture.
+  const flannel = (() => { const c = document.createElement('canvas'); c.width = c.height = 64; const g = c.getContext('2d');
+    g.fillStyle = '#e2d7bd'; g.fillRect(0, 0, 64, 64);
+    for (let i = 0; i < 64; i += 2) { g.fillStyle = `rgba(120,100,70,${0.05 + Math.random() * 0.07})`; g.fillRect(0, i, 64, 1); g.fillRect(i, 0, 1, 64); }
+    const t = new THREE.CanvasTexture(c); t.colorSpace = THREE.SRGBColorSpace; t.wrapS = t.wrapT = THREE.RepeatWrapping; t.repeat.set(3, 2); return t; })();
+  const bagMat2 = new THREE.MeshStandardMaterial({ map: flannel, roughness: 1 });
+  const bagGeo2 = new THREE.LatheGeometry([[0, 0], [0.052, 0], [0.062, 0.015], [0.064, 0.06], [0.062, 0.13], [0.05, 0.165], [0.022, 0.19], [0.016, 0.2], [0.026, 0.215], [0.03, 0.235], [0.018, 0.25], [0, 0.252]].map(([r, y]) => new THREE.Vector2(r, y)), 18);
+  const twineMat = new THREE.MeshStandardMaterial({ color: 0x8f7650, roughness: 1 });
+  const bags = [0, 1, 2].map((i) => {
+    const b = new THREE.Group(); b.add(new THREE.Mesh(bagGeo2, bagMat2));
+    const tie = new THREE.Mesh(new THREE.TorusGeometry(0.019, 0.005, 6, 16).rotateX(Math.PI / 2), twineMat); tie.position.y = 0.198; b.add(tie);
+    b.position.set(0.5 + i * 0.15, 0, 0); b.rotation.set((i - 1) * 0.05, i * 1.3, 0); display.add(b); return b; });
+  { // the powder keg, with iron hoops
+    const keg = new THREE.Group();
+    const staves = new THREE.Mesh(new THREE.LatheGeometry([[0.0, 0], [0.17, 0], [0.2, 0.12], [0.205, 0.22], [0.2, 0.32], [0.17, 0.44], [0.0, 0.44]].map(([r, y]) => new THREE.Vector2(r, y)), 20),
+      new THREE.MeshStandardMaterial({ color: 0x7a4f2a, roughness: 0.85 }));
+    keg.add(staves);
+    for (const y of [0.06, 0.15, 0.29, 0.38]) { const r = y < 0.22 ? 0.17 + (y / 0.12) * 0.03 : 0.2 - ((y - 0.32) / 0.12) * 0.03; const h = new THREE.Mesh(new THREE.TorusGeometry(Math.min(0.206, r + 0.004), 0.008, 6, 28).rotateX(Math.PI / 2), new THREE.MeshStandardMaterial({ color: 0x2f2d2b, metalness: 0.5, roughness: 0.6 })); h.position.y = y; keg.add(h); }
+    keg.position.set(1.15, 0, -0.05); display.add(keg);
+  }
   const powderLabel = { m: null };
 
   // smoke (a few puffs)
@@ -164,9 +183,9 @@ export function buildLab(onProgress) {
       shownBall.material = ballMats[st.ball]; ball.material = ballMats[st.ball];
       if (ballLabel.m) { display.remove(ballLabel.m); labels.splice(labels.indexOf(ballLabel.m), 1); }
       ballLabel.m = addLabel(display, T.levels[st.ball], new THREE.Vector3(-0.05, 0.32, 0), { worldW: 1.0 });
-      const n = lv('powder').scoops; bags.forEach((b, i) => { b.visible = i < n; });
+      const n = lv('powder').bags; bags.forEach((b, i) => { b.visible = i < n; });
       if (powderLabel.m) { display.remove(powderLabel.m); labels.splice(labels.indexOf(powderLabel.m), 1); }
-      powderLabel.m = addLabel(display, T.levels[st.powder], new THREE.Vector3(0.71, 0.32, 0), { worldW: 0.9 });
+      powderLabel.m = addLabel(display, T.levels[st.powder], new THREE.Vector3(0.65, 0.42, 0), { worldW: 1.0 });
       const k = lv('cannon').blocks; blocks.forEach((b, i) => { b.visible = i < k; b.userData.label.visible = i < k; });
       chocks.forEach((c) => { c.visible = st.wheels === 'blocked'; });
     },

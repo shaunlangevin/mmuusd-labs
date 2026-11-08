@@ -54,7 +54,7 @@ export async function page(opts = {}) {
   p.on('request', (r) => { if (!r.url().startsWith(url()) && !r.url().startsWith('data:') && !r.url().startsWith('blob:')) p.offsite.push(r.url()); });
   if (opts.xr) {
     await p.addInitScript({ content: fs.readFileSync(path.join(HERE, 'lib', 'iwer.min.js'), 'utf8') });
-    await p.addInitScript({ content: 'const d = new IWER.XRDevice(IWER.metaQuest3); d.installRuntime({ forceInstall: true }); window.__xr = d;' });
+    await p.addInitScript({ content: 'const d = new IWER.XRDevice(IWER.metaQuest3); d.installRuntime({ forceInstall: true }); window.__xr = d;' + (opts.xrInit || '') });
   }
   return p;
 }
@@ -75,7 +75,7 @@ export async function aim(p, from, to) {
     const q = new THREE.Quaternion().setFromRotationMatrix(new THREE.Matrix4().lookAt(new THREE.Vector3(...from), new THREE.Vector3(...to), new THREE.Vector3(0, 1, 0)));
     c.quaternion.set(q.x, q.y, q.z, q.w);
   }, [from, to]);
-  await sleep(300);
+  await sleep(600);   // the emulator renders only a few frames a second: let at least one frame see the new aim
 }
 export const setTrigger = async (p, v) => { await p.evaluate((v) => window.__xr.controllers.right.updateButtonValue('trigger', v), v); await sleep(300); };
 export async function trigger(p) { await setTrigger(p, 1); await setTrigger(p, 0); }

@@ -50,6 +50,7 @@ export const UI = {
     stepFireScreen: 'Now click Fire.',
     stepRowDone: 'Row done! Swap roles. Say it in one sentence: what changed, and why?',
     stepPick: 'Pick the next one to test.',
+    rollingBack: 'The crew rolls the cannon back to the start line (0 cm)…',
     allDone: 'All rows done! Calculate each average, then explain your results.',
     tableTitle: 'How far the cannon rolled back (cm)',
     trial: (n) => `Trial ${n}`, average: 'Average', youCalc: 'you calculate',
@@ -84,7 +85,7 @@ export const UI = {
     levels: {
       wood: 'Wood 0.6 kg', stone: 'Stone 2.3 kg', iron: 'Iron 5.4 kg',
       c1000: '1,000 kg', c1500: '1,500 kg', c2000: '2,000 kg',
-      p1: '1 scoop', p2: '2 scoops', p3: '3 scoops',
+      p1: '1 bag · 0.4 kg', p2: '2 bags · 0.8 kg', p3: '3 bags · 1.2 kg',
       rolling: 'Rolling', blocked: 'Blocked',
     },
     blockLabel: '+500 kg',
@@ -133,6 +134,7 @@ export const UI = {
     stepFireScreen: 'Ahora haz clic en Disparar.',
     stepRowDone: '¡Fila completa! Cambien de papel. Dilo en una oración: ¿qué cambió y por qué?',
     stepPick: 'Elige lo siguiente que vas a probar.',
+    rollingBack: 'La tripulación regresa el cañón a la línea de salida (0 cm)…',
     allDone: '¡Todas las filas completas! Calcula cada promedio y luego explica tus resultados.',
     tableTitle: 'Cuánto retrocedió el cañón (cm)',
     trial: (n) => `Prueba ${n}`, average: 'Promedio', youCalc: 'tú calculas',
@@ -162,7 +164,7 @@ export const UI = {
     levels: {
       wood: 'Madera 0.6 kg', stone: 'Piedra 2.3 kg', iron: 'Hierro 5.4 kg',
       c1000: '1,000 kg', c1500: '1,500 kg', c2000: '2,000 kg',
-      p1: '1 medida', p2: '2 medidas', p3: '3 medidas',
+      p1: '1 bolsa · 0.4 kg', p2: '2 bolsas · 0.8 kg', p3: '3 bolsas · 1.2 kg',
       rolling: 'Ruedan', blocked: 'Bloqueadas',
     },
     blockLabel: '+500 kg',
