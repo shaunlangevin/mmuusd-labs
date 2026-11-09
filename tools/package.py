@@ -4,7 +4,7 @@
 
 - Stamps version.json with the date/time (US Eastern) and the label.
 - The zip is named mmuusd-labs_YYYY-MM-DD_HHMM_<label>.zip, with one top-level folder of the same name.
-- It always includes the code, docs, tests and tools. The cannon model (8.6 MB) and three.js go in
+- It always includes the code, docs, tests, tools, the Firebase rules and the Firebase bundle. The cannon model (8.6 MB) and three.js go in
   only with --model (they rarely change); the first upload needs them.
 - GitHub's web upload takes at most 100 files at a time, so the script warns if the zip has more.
 """
@@ -27,8 +27,8 @@ name = f'mmuusd-labs_{now.strftime("%Y-%m-%d_%H%M")}_{label}'
 with open(os.path.join(ROOT, 'version.json'), 'w') as f:
     json.dump({'version': now.strftime('%Y-%m-%d %H:%M'), 'label': label}, f); f.write('\n')
 
-files = ['index.html', 'README.md', 'PRIVACY.md', 'version.json']
-folders = ['js', 'tests', 'tools'] + (['vendor', 'labs'] if model else [])
+files = ['index.html', 'teacher.html', 'README.md', 'PRIVACY.md', 'version.json']
+folders = ['js', 'tests', 'tools', 'firebase', 'vendor/firebase'] + (['vendor', 'labs'] if model else [])
 for folder in folders:
     for dp, _, fs in os.walk(os.path.join(ROOT, folder)):
         files += [os.path.relpath(os.path.join(dp, x), ROOT) for x in fs if not x.startswith('.') and '__pycache__' not in dp]

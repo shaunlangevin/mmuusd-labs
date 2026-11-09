@@ -29,6 +29,12 @@
   .note { font-size: 13px; color: var(--dim); line-height: 1.4; margin-top: 4px; }
   #status { margin-top: 10px; font-size: 14px; color: var(--dim); min-height: 1.2em; }
   #menu { position: fixed; left: 16px; top: 16px; z-index: 5; font-size: 15px; padding: 9px 14px; background: var(--panel); }
+  [hidden] { display: none !important; }
+  #freeze { position: fixed; inset: 0; z-index: 9; display: grid; place-items: center; background: rgba(20,17,14,0.82); }
+  #freeze .box { padding: 28px 34px; max-width: min(640px, calc(100% - 32px)); text-align: center; }
+  #freeze-from { font-size: 14px; font-weight: 800; letter-spacing: 0.08em; text-transform: uppercase; color: var(--gold); margin-bottom: 10px; }
+  #freeze-text { font-size: 30px; font-weight: 800; line-height: 1.25; }
+  #hs-seg button { flex: 0 0 auto; min-width: 46px; }
   .small { font-size: 12px; color: var(--dim); line-height: 1.4; margin-top: 12px; }
   body.big-text #start { width: min(540px, calc(100% - 32px)); font-size: 19px; }
   body.big-text h1 { font-size: 33px; } body.big-text #intro { font-size: 19px; } body.big-text .note, body.big-text .small { font-size: 16px; }
@@ -37,6 +43,7 @@
 <body>
 <div id="app"></div>
 <button id="menu" hidden>☰</button>
+<div id="freeze" hidden><div class="box"><div id="freeze-from"></div><div id="freeze-text"></div></div></div>
 <div id="start" class="box">
   <div id="kicker">Grade 6 · Forces and Motion</div>
   <h1 id="title">Cannon Recoil Lab</h1>
@@ -45,6 +52,7 @@
     <div class="seg"><button data-lang="en">English</button><button data-lang="es">Español</button></div></div>
   <div class="row" id="size-row"><span id="l-size">Size</span><div class="seg" id="size-seg"></div><div class="note" id="size-note"></div></div>
   <div class="row"><span id="l-acc">Supports</span><div class="seg" id="acc-seg"></div></div>
+  <div class="row" id="hs-row" hidden><span id="l-hs">Headset</span><div class="note" id="hs-now"></div><div class="seg" id="hs-seg"></div><div class="note" id="hs-note"></div></div>
   <div class="btns">
     <button id="btn-ar" class="primary" hidden>Start in the headset</button>
     <button id="btn-vr" class="primary" hidden>Start in VR</button>

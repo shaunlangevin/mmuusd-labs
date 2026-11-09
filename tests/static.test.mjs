@@ -14,13 +14,26 @@ export default (test) => {
     walk(UI.es, 'es.'); walk(UI.en, 'en.'); eq(empty, [], 'no empty text');
     ok(UI.es.levels.wood !== UI.en.levels.wood, 'the Spanish is really Spanish');
   });
-  test('privacy: the code never sends or stores anything', async () => {
+  test('privacy: headsets never send or store anything about students', async () => {
     const js = fs.readdirSync(path.join(ROOT, 'js')).map((f) => [f, read('js/' + f)]);
     for (const [f, src] of js) {
-      for (const bad of ['fetch(', 'XMLHttpRequest', 'sendBeacon', 'WebSocket', 'localStorage', 'sessionStorage', 'indexedDB', 'document.cookie', 'getUserMedia', 'firebase', 'gtag(', 'analytics']) {
+      for (const bad of ['fetch(', 'XMLHttpRequest', 'sendBeacon', 'WebSocket', 'sessionStorage', 'indexedDB', 'document.cookie', 'getUserMedia', 'gtag(', 'analytics']) {
         ok(!src.includes(bad), `${f} uses ${bad}`);
       }
+      // the browser only keeps the headset's sticker number (shared with the exhibits), in one small file
+      if (f !== 'headset.js') ok(!src.includes('localStorage'), `${f} uses localStorage`);
+      // only the read-only listener (headsets) and the teacher page load Firebase
+      if (!['classroom.js', 'teacher.js'].includes(f)) ok(!src.includes('vendor/firebase'), `${f} loads Firebase`);
     }
+    const hs = read('js/headset.js');
+    eq([...hs.matchAll(/localStorage\.\w+/g)].map((m) => m[0]).sort(), ['localStorage.getItem', 'localStorage.setItem'], 'headset.js only reads and writes one value');
+    ok(/const KEY = 'xr-headset';/.test(hs) && !/localStorage\.\w+\('/.test(hs), 'that value is the headset number');
+    // the headset side of the console can't write: no set/update/push/remove, no sign-in
+    const cl = read('js/classroom.js');
+    const used = [...new Set([...cl.matchAll(/fb\.(\w+)/g)].map((m) => m[1]))].sort();
+    eq(used.filter((x) => !['initializeApp', 'getDatabase', 'connectDatabaseEmulator', 'onValue', 'ref'].includes(x)), [], 'classroom.js only connects and listens');
+    for (const w of ['fb-auth', 'signIn', 'serverTimestamp']) ok(!cl.includes(w), `classroom.js uses ${w}`);
+    ok(!read('js/app.js').includes('teacher.js') && !read('index.html').includes('teacher'), 'the lab never loads the teacher page');
     const html = read('index.html');
     ok(!/<script[^>]+src="https?:/.test(html) && !/https?:\/\/(?!sketchfab)/.test(html.replace(/<!--[\s\S]*?-->/g, '')), 'index.html loads nothing from other sites');
   });

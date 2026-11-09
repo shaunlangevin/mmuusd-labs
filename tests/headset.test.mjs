@@ -141,6 +141,64 @@ export default (test) => {
     await p.close();
   }, { slow: true });
 
+  test('moving by hand: grip the knob to slide the lab (it stays pinned there), point at the panel’s bar to move the panel', async () => {
+    const p = await page({ xr: true });
+    await ready(p);
+    await p.click('#btn-ar'); await sleep(2500);
+    let m = await p.evaluate(() => window.__dbg.movers()); eq([m.knob, m.bar, m.dock], [true, true, 'above'], 'the knob and the bar show');
+    const ctl = (fn, arg) => p.evaluate(fn, arg);
+    // grip at the knob, slide 25 cm to the right and 5 cm up (desk size can be lifted), let go
+    const k = await p.evaluate(() => window.__dbg.knobWorld());
+    const before = await labPose(p);
+    await ctl((k) => { const c = window.__xr.controllers.right; c.position.set(k[0], k[1], k[2] + 0.03); c.quaternion.set(0, 0, 0, 1); }, k); await sleep(400);
+    await ctl(() => window.__xr.controllers.right.updateButtonValue('squeeze', 1)); await sleep(400);
+    eq((await p.evaluate(() => window.__dbg.movers())).grab, 'lab', 'gripping the knob grabs the lab');
+    await ctl(() => { const c = window.__xr.controllers.right; c.position.set(c.position.x + 0.25, c.position.y + 0.05, c.position.z); }); await sleep(800);
+    await ctl(() => window.__xr.controllers.right.updateButtonValue('squeeze', 0)); await sleep(1500);
+    const k2 = await p.evaluate(() => window.__dbg.knobWorld()), after = await labPose(p);
+    near(k2[0] - k[0], 0.25, 0.04, 'the knob followed the hand sideways');
+    near(after.p[1] - before.p[1], 0.05, 0.01, 'desk size: lifted 5 cm');
+    ok(Math.abs(after.r - before.r) < 0.6, 'still roughly facing the student');
+    const a = await p.evaluate(() => window.__dbg.anchorState()); eq(a.anchor, 'ok', 'pinned again where it was let go');
+    // the lab stays there (recentring and walking don't undo it)
+    await sleep(800); near((await labPose(p)).p[0], after.p[0], 0.002, 'it stays put');
+    // point at the panel's bar from here and drag it 30 cm left
+    const b = await p.evaluate(() => window.__dbg.barWorld());
+    await aim(p, CP, b); await setTrigger(p, 1);
+    eq((await p.evaluate(() => window.__dbg.movers())).grab, 'panel', 'pointing at the bar grabs the panel');
+    await ctl(([b]) => { const { THREE } = window.__dbg, c = window.__xr.controllers.right; const to = new THREE.Vector3(b[0] - 0.3, b[1], b[2]);
+      const q = new THREE.Quaternion().setFromRotationMatrix(new THREE.Matrix4().lookAt(c.position.clone(), to, new THREE.Vector3(0, 1, 0))); c.quaternion.set(q.x, q.y, q.z, q.w); }, [b]); await sleep(800);
+    await setTrigger(p, 0); await sleep(400);
+    const b2 = await p.evaluate(() => window.__dbg.barWorld());
+    ok(b2[0] < b[0] - 0.15, `the panel moved left: ${b[0].toFixed(2)} → ${b2[0].toFixed(2)}`);
+    eq((await p.evaluate(() => window.__dbg.movers())).dock, 'user', 'and stays where the student put it');
+    await tap(p, 'fire'); eq((await st(p)).anim?.kind, 'live', 'its buttons still work there'); await idle(p);
+    const b3 = await p.evaluate(() => window.__dbg.barWorld());
+    near(b3[0], b2[0], 0.01, 'it stayed put while the content changed');
+    eq(pageErrors(p), [], 'page errors');
+    await p.close();
+  }, { slow: true });
+
+  test('moving by hand at half size: point at the knob and drag the lab across the floor', async () => {
+    const p = await page({ xr: true });
+    await ready(p, '?size=half');
+    await p.click('#btn-ar'); await sleep(2500);
+    await p.waitForFunction(() => window.__dbg.state().placing, null, { timeout: 60000 });
+    await aim(p, CP, [0, 0, -2.2]); await trigger(p); await sleep(800);
+    const k = await p.evaluate(() => window.__dbg.knobWorld()), y0 = (await labPose(p)).p[1];
+    ok(k[1] > 0.7 && k[1] < 1.0, 'the knob floats at waist height: ' + k[1].toFixed(2));
+    await aim(p, CP, k); await setTrigger(p, 1);
+    eq((await p.evaluate(() => window.__dbg.movers())).grab, 'lab', 'pointing at the knob grabs the lab');
+    await aim(p, CP, [k[0] + 0.5, k[1], k[2] + 0.3]); await sleep(400);
+    await setTrigger(p, 0); await sleep(1500);
+    const k2 = await p.evaluate(() => window.__dbg.knobWorld()), after = await labPose(p);
+    ok(Math.hypot(k2[0] - k[0], k2[2] - k[2]) > 0.3, 'the lab slid across the floor');
+    near(after.p[1], y0, 0.001, 'and stayed on the floor');
+    eq((await p.evaluate(() => window.__dbg.anchorState())).anchor, 'ok', 'pinned again');
+    eq(pageErrors(p), [], 'page errors');
+    await p.close();
+  }, { slow: true });
+
   test('the panel never covers the cannon (desk, half and life size, tallest screen)', async () => {
     for (const size of ['desk', 'half', 'life']) {
       const p = await page({ xr: true });

@@ -45,13 +45,20 @@ function loadPlaywright() {
   }
   throw new Error('Playwright not found. Install it with: npm i -g playwright && npx playwright install chromium');
 }
-// opts: { xr: false (IWER Quest 3 emulator), viewport }
+// opts: { xr: false (IWER Quest 3 emulator), mocks: false (fake Firebase), xrInit, viewport }
 export async function page(opts = {}) {
   if (!browser) browser = await loadPlaywright().launch({ args: ['--use-gl=angle', '--use-angle=swiftshader', '--enable-unsafe-swiftshader', '--ignore-gpu-blocklist', '--autoplay-policy=no-user-gesture-required'] });
   const p = await browser.newPage({ viewport: opts.viewport || { width: 1100, height: 800 } });
   p.errors = []; p.offsite = [];
   p.on('pageerror', (e) => p.errors.push(e.message));
   p.on('request', (r) => { if (!r.url().startsWith(url()) && !r.url().startsWith('data:') && !r.url().startsWith('blob:')) p.offsite.push(r.url()); });
+  if (opts.mocks) {   // a fake Firebase and a filled-in config (the real config can stay empty)
+    await p.route('**/vendor/firebase/fb-db.js', (r) => r.fulfill({ path: path.join(HERE, 'lib/fb-db.js'), contentType: 'text/javascript' }));
+    await p.route('**/vendor/firebase/fb-auth.js', (r) => r.fulfill({ path: path.join(HERE, 'lib/fb-auth.js'), contentType: 'text/javascript' }));
+    await p.route('**/js/firebase-config.js', (r) => r.fulfill({ path: path.join(HERE, 'lib/firebase-config.js'), contentType: 'text/javascript' }));
+  } else {   // otherwise the console is off, so no test ever talks to the real Firebase project
+    await p.route('**/js/firebase-config.js', (r) => r.fulfill({ path: path.join(HERE, 'lib/firebase-config-off.js'), contentType: 'text/javascript' }));
+  }
   if (opts.xr) {
     await p.addInitScript({ content: fs.readFileSync(path.join(HERE, 'lib', 'iwer.min.js'), 'utf8') });
     await p.addInitScript({ content: 'const d = new IWER.XRDevice(IWER.metaQuest3); d.installRuntime({ forceInstall: true }); window.__xr = d;' + (opts.xrInit || '') });
@@ -83,6 +90,12 @@ export async function tap(p, id) {   // point the controller at a panel button a
   const at = await p.evaluate((id) => window.__dbg.panel.buttonWorld(id)?.toArray(), id);
   ok(at, `the panel has no "${id}" button`);
   await aim(p, CP, at); await trigger(p);
+}
+// the teacher console's room record, as a headset or the teacher page would receive it
+export async function room(p, name, rec) {
+  await p.waitForFunction((n) => window.__fbmock && window.__fbmock.subs['rooms/' + n], name, { timeout: 20000 });
+  await p.evaluate(([n, v]) => window.__fbmock.set('rooms/' + n, v), [name, rec]);
+  await sleep(150);
 }
 export const pageErrors = (p) => p.errors.filter((e) => !/AbortError|play\(\) request/i.test(e));
 export async function closeAll() { if (browser) await browser.close(); if (server) server.close(); }

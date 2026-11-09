@@ -3,11 +3,14 @@
 import * as THREE from 'three';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 import { UI } from './i18n.js';
-import { LabPanel, Loupe } from './ui3d.js';
+import { LabPanel, Loupe, moveKnobTexture, grabBarTexture } from './ui3d.js';
 import { buildLab, MUZZLE, BACKSTOP_X, BALL_R, RULER_Z, RULER_CM, VENT, WHEEL_R } from './scene.js';
 import { VARS, VAR_KEYS, DEFAULTS, level, shot, trial, challengeTarget, onTheLine, G } from './physics.js';
 import { unlockAudio, boom } from './audio.js';
 import { handGrabbing } from './grab.js';
+import { configured as consoleOn } from './classroom.js';
+import { GROUPS, DEFAULT_ROOM } from './firebase-config.js';
+import { readHeadset, saveHeadset } from './headset.js';
 
 const $ = (id) => document.getElementById(id);
 const params = new URLSearchParams(location.search);
@@ -18,7 +21,7 @@ const flag = (v, def) => (v == null ? def : !/^(0|off|false|no)$/i.test(v));
 // ?lang=en|es  ?sizes=desk,half,life  ?size=desk  ?lock=ball|cannon|powder|wheels  ?text=big  ?calm=on  ?number=on  ?fire=button  ?start=plan  ?debug=1
 const SIZE_SCALE = { desk: 1 / 7, half: 0.5, life: 1 };
 const allowed = (params.get('sizes') || 'desk,half,life').split(',').map((s) => s.trim()).filter((s) => s in SIZE_SCALE);
-const SIZES = allowed.length ? allowed : ['desk'];
+let SIZES = allowed.length ? allowed : ['desk'];
 const S = {
   lang: params.get('lang') === 'es' ? 'es' : 'en',
   size: SIZES.includes(params.get('size')) ? params.get('size') : SIZES[0],
@@ -29,6 +32,8 @@ const S = {
   lanyard: params.get('fire') !== 'button',
 };
 const DEBUG = params.get('debug') === '1';
+// what the link asked for: the teacher console can change these, and "Default" on the console brings them back
+const LINK = { ...S, sizes: [...SIZES], path: params.get('path') === 'full' ? 'full' : 'guided', start: params.get('start') === 'plan' ? 'plan' : 'try' };
 const T = () => UI[S.lang];
 const labScale = () => SIZE_SCALE[S.size];
 
@@ -67,8 +72,9 @@ reticle.renderOrder = 20; reticle.visible = false; scene.add(reticle);
 // Two paths. The default is GUIDED: one sentence and one big button at a time, about 8 minutes, so students can work
 // without constant help: Try it → which push was bigger? → compare two settings (predict, fire, record) → explain.
 // The teacher switches on the full investigation (plan, 3 trials per level, table, challenge) with ?path=full.
-const PATH = params.get('path') === 'full' ? 'full' : 'guided';
-const START = PATH === 'full' && params.get('start') === 'plan' ? 'plan' : 'try';   // ?path=full&start=plan skips "Try it" and the 3rd-law question (day 2)
+let PATH = LINK.path;           // the teacher console can switch it (that starts the lab over)
+let START = PATH === 'full' && LINK.start === 'plan' ? 'plan' : 'try';   // ?path=full&start=plan skips "Try it" and the 3rd-law question (day 2)
+let frozen = null;             // a message from the teacher console: eyes | wait | remove | done | paused
 let phase = START;             // try | q3 | watch | answer | plan | test | explain | challenge
 let confirmRestart = false;
 let optionsOpen = false;
@@ -100,7 +106,7 @@ const predKey = () => (phase === 'test' ? curLevel().id : phase === 'gcomp' ? 'g
 const predicted = () => predKey() !== null && test.predFor === predKey();
 const canPredict = () => !awaitRecord && ((phase === 'test' && countFor(curLevel().id) < 3) || (phase === 'gcomp' && GD.results.length === GD.i));
 function canFireNow() {   // the shot that's allowed right now (the lanyard only shows when it is)
-  if (awaitRecord) return false;
+  if (awaitRecord || frozen) return false;
   if (phase === 'try' || phase === 'challenge') return true;
   if (phase === 'test') return predicted() && countFor(curLevel().id) < 3;
   if (phase === 'gcomp') return predicted() && GD.results.length === GD.i;
@@ -253,13 +259,13 @@ function refresh() {
   const z0 = panel.zoom;
   panel.setZoom(S.big ? 1.3 : 1);
   panel.show(panelSpec());
-  if (mode !== 'desktop' && dock && panel.zoom !== z0) layoutPanel(false);   // Bigger text: find a new dock for the bigger panel
+  if (mode !== 'desktop' && dock && panel.zoom !== z0) layoutPanel(false, false);   // Bigger text: find a new dock for the bigger panel
   document.body.classList.toggle('big-text', S.big);
 }
 
 // ═════════════ button handling ═════════════
 function onButton(id) {
-  if (!id || !panel.buttons.some((b) => b.id === id && !b.disabled)) return;   // only what the panel shows right now
+  if (!id || frozen || !panel.buttons.some((b) => b.id === id && !b.disabled)) return;   // only what the panel shows right now
   unlockAudio();
   const [a, b, c] = id.split(':');
   if (a !== 'restart') confirmRestart = false;
@@ -613,10 +619,12 @@ function panelDock() {
     const vh = v.setY(0).normalize(), side = -Math.atan2(new THREE.Vector3().crossVectors(u, vh).y, u.dot(vh));   // + = to the right
     right = Math.max(right, side);
   }
-  const bottom = Math.max(-0.3, top + 0.05);                                   // bottom edge just above the lab
-  const topOfTallest = Math.atan2(d * Math.sin(bottom) + tallest, d * Math.cos(bottom));
-  if (topOfTallest < 0.62) {   // above the lab, straight ahead, low enough to read comfortably
-    return { kind: 'above', p: C.clone().add(u.clone().multiplyScalar(d * Math.cos(bottom))).setY(C.y + d * Math.sin(bottom)) };
+  for (const gap of [0.09, 0.05]) {   // bottom edge just above the lab (with room for the grab bar if it fits)
+    const bottom = Math.max(-0.3, top + gap);
+    const topOfTallest = Math.atan2(d * Math.sin(bottom) + tallest, d * Math.cos(bottom));
+    if (topOfTallest < 0.62) {   // above the lab, straight ahead, low enough to read comfortably
+      return { kind: 'above', p: C.clone().add(u.clone().multiplyScalar(d * Math.cos(bottom))).setY(C.y + d * Math.sin(bottom)) };
+    }
   }
   const yaw = Math.min(1.25, right + 0.08 + halfW);                            // otherwise beside it, on the right
   const dir = u.clone().applyAxisAngle(UP, -yaw);
@@ -643,11 +651,14 @@ function panelOverlap() {
 }
 function panelPosFromDock() {
   const h = panel.heightM();
+  if (dock.kind === 'user') { const p = lab.localToWorld(dock.pl.clone()); return p.setY(p.y + h / 2); }   // put there by the student (bottom edge, kept with the lab)
   return dock.p.clone().setY(dock.p.y + (dock.kind === 'above' ? h / 2 : -h / 2));
 }
-function layoutPanel(instant) {
+// reset = false keeps a spot the student chose with the grab bar
+function layoutPanel(instant, reset = true) {
   if (mode === 'desktop') return;
   panel.setBase(S.size === 'desk' ? 0.72 : 0.95);
+  if (!reset && dock?.kind === 'user') return;
   dock = panelDock(); dockedFrom = camera.position.clone().setY(0);
   panelGoal = instant ? null : true;
   if (instant) panel.mesh.position.copy(panelPosFromDock());
@@ -658,7 +669,7 @@ function followPanel(dt) {
   panel.mesh.visible = lab.visible && !placing;
   if (!lab.visible || !dock) return;
   const C = camera.position;
-  if (dockedFrom && C.clone().setY(0).distanceTo(dockedFrom) > 0.6) layoutPanel(false);   // the student walked: dock again from here
+  if (dock.kind !== 'user' && dockedFrom && C.clone().setY(0).distanceTo(dockedFrom) > 0.6) layoutPanel(false);   // the student walked: dock again from here
   const goal = panelPosFromDock();
   if (panelGoal) {   // gliding to a new dock
     panel.mesh.position.lerp(goal, 1 - Math.exp(-dt * (S.calm ? 2.5 : 5)));
@@ -699,6 +710,108 @@ function placeLoupe() {
   loupe.mesh.lookAt(camera.getWorldPosition(_w));
 }
 
+// ═════════════ moving the lab and the panel by hand ═════════════
+// A round knob with four arrows sits in front of the lab, on its left: grab it (grip, trigger, pinch or a fist; or point
+// and pull the trigger from a distance) and slide the lab. It keeps facing the student and is pinned again where it's let go.
+// A dotted bar under the panel moves the panel the same way; it then stays in that spot beside the lab.
+const KNOB_LOCAL = new THREE.Vector3(-2.2, 0, 1.8);   // lab metres: front left, clear of the ruler and the lanyard
+const knob = new THREE.Mesh(new THREE.CircleGeometry(0.04, 40), new THREE.MeshBasicMaterial({ map: moveKnobTexture(), transparent: true, depthTest: false, depthWrite: false }));
+knob.renderOrder = 26; knob.visible = false; scene.add(knob);
+const knobTarget = new THREE.Mesh(new THREE.SphereGeometry(0.075, 12, 8), new THREE.MeshBasicMaterial({ transparent: true, opacity: 0, depthWrite: false }));
+knob.add(knobTarget);
+const knobStem = new THREE.Line(new THREE.BufferGeometry().setFromPoints([new THREE.Vector3(), new THREE.Vector3(0, -1, 0)]),
+  new THREE.LineBasicMaterial({ color: 0xd4af6a, transparent: true, opacity: 0.5 }));
+knobStem.visible = false; scene.add(knobStem);
+const bar = new THREE.Mesh(new THREE.PlaneGeometry(0.2, 0.031), new THREE.MeshBasicMaterial({ map: grabBarTexture(), transparent: true, depthTest: false, depthWrite: false, side: THREE.DoubleSide }));
+bar.renderOrder = 33; bar.visible = false; scene.add(bar);
+const barTarget = new THREE.Mesh(new THREE.PlaneGeometry(0.28, 0.07), new THREE.MeshBasicMaterial({ transparent: true, opacity: 0, depthWrite: false, side: THREE.DoubleSide }));
+bar.add(barTarget);
+const BAR_GAP = 0.03;   // metres between the panel's bottom edge and the bar's centre
+let grab = null;        // { kind: 'lab' | 'panel', c (controller) | hand, ray, start, at0, … }
+const knobWorld = () => knob.getWorldPosition(new THREE.Vector3());
+const barWorld = () => bar.getWorldPosition(new THREE.Vector3());
+const canMoveLab = () => knob.visible && !pull && !placing && !grab;
+const canMovePanel = () => bar.visible && !pull && !placing && !grab;
+const knobHit = () => (canMoveLab() ? raycaster.intersectObject(knobTarget, false)[0] : null);
+const barHit = () => (canMovePanel() ? raycaster.intersectObject(barTarget, false)[0] : null);
+function placeMovers() {
+  const xr = mode !== 'desktop';
+  knob.visible = xr && lab.visible && !placing && !optionsOpen && (!anim || anim.kind !== 'live') || grab?.kind === 'lab';
+  knobStem.visible = knob.visible && S.size !== 'desk';
+  if (knob.visible) {
+    const g = lab.localToWorld(KNOB_LOCAL.clone());
+    knob.position.copy(g).setY(S.size === 'desk' ? g.y + 0.045 : lab.position.y + 0.85);   // desk: just above the desk; floor sizes: waist height
+    knob.scale.setScalar(S.size === 'desk' ? 0.9 : 1.4);
+    knob.lookAt(camera.position);
+    knobStem.position.copy(knob.position); knobStem.scale.y = knob.position.y - lab.position.y;
+    const hot = grab?.kind === 'lab' || moverNear === 'lab';
+    knob.material.color.setScalar(hot ? 1.25 : 1);
+  }
+  bar.visible = xr && panel.mesh.visible;
+  if (bar.visible) {
+    panel.mesh.updateMatrixWorld();
+    const q = panel.mesh.getWorldQuaternion(new THREE.Quaternion());
+    bar.quaternion.copy(q);
+    bar.position.copy(panel.mesh.position).addScaledVector(new THREE.Vector3(0, 1, 0).applyQuaternion(q), -(panel.heightM() / 2 + BAR_GAP));
+    bar.scale.setScalar(panel.base);
+    bar.material.color.setScalar(grab?.kind === 'panel' || moverNear === 'panel' ? 1.25 : 1);
+  }
+}
+// where the grabbing controller or hand is (for a ray grab: where its ray meets the grab plane or sphere)
+function grabPoint(g) {
+  if (g.hand) return jointPos(g.hand, 'middle-finger-metacarpal') || jointPos(g.hand, 'wrist') || g.last;
+  if (!g.ray) return ctrlPos(g.c);
+  setRayFrom(g.c);
+  const { origin, direction } = raycaster.ray;
+  if (g.kind === 'lab') {   // slide along the level the knob was grabbed at
+    if (direction.y > -0.02) return g.last;   // pointing at or above the horizon: hold still
+    const d = (g.at0.y - origin.y) / direction.y;
+    return d > 0 && d < 12 ? origin.clone().addScaledVector(direction, d) : g.last;
+  }
+  return origin.clone().addScaledVector(direction, g.dist);   // the panel stays at the same distance along the ray
+}
+function startGrab(kind, src, ray, hit) {
+  unlockAudio();
+  const g = { kind, ray: !!ray, labPos: lab.position.clone(), labYaw: lab.rotation.y, knob0: knobWorld(), bar0: barWorld() };
+  if (src.isXRHand || src.joints) g.hand = src; else g.c = src;
+  if (ray) { g.dist = hit.distance; g.at0 = hit.point.clone(); }
+  g.start = g.ray ? hit.point.clone() : grabPoint(g); g.last = g.start.clone();
+  if (kind === 'lab') { dropAnchor(); g.knobGround = lab.localToWorld(KNOB_LOCAL.clone()); }
+  grab = g;
+}
+function updateGrab() {
+  if (!grab) return;
+  const g = grab, p = grabPoint(g); g.last = p;
+  const delta = p.clone().sub(g.start);
+  if (g.kind === 'lab') {
+    if (S.size !== 'desk' || g.ray) delta.y = 0;   // floor sizes stay on the floor; desk size can be lifted onto a real desk by hand
+    const s = labScale(), want = g.knobGround.clone().add(delta);
+    // keep the side of the cannon toward the student (turn about the knob, so it stays in the hand)
+    const C = camera.position;
+    const centre = want.clone().add(new THREE.Vector3(-0.35 - KNOB_LOCAL.x, 0, -KNOB_LOCAL.z).multiplyScalar(s).applyAxisAngle(UP, lab.rotation.y));
+    if (Math.hypot(C.x - centre.x, C.z - centre.z) > 0.3) {
+      const yaw = Math.atan2(C.x - centre.x, C.z - centre.z);
+      let dy = yaw - lab.rotation.y; dy = Math.atan2(Math.sin(dy), Math.cos(dy));
+      lab.rotation.y += dy * 0.25;
+    }
+    lab.position.copy(want).sub(new THREE.Vector3(KNOB_LOCAL.x, 0, KNOB_LOCAL.z).multiplyScalar(s).applyAxisAngle(UP, lab.rotation.y));
+    lab.position.y = Math.max(0, g.labPos.y + delta.y);
+  } else {
+    const C = camera.position, barAt = g.bar0.clone().add(delta);
+    const v = barAt.clone().sub(C), d = v.length();   // keep it readable: 35 cm to 2.5 m away
+    if (d < 0.35 || d > 2.5) barAt.copy(C).addScaledVector(v.normalize(), Math.min(2.5, Math.max(0.35, d)));
+    const bottom = barAt.clone().setY(barAt.y + BAR_GAP);
+    dock = { kind: 'user', pl: lab.worldToLocal(bottom) };
+    panelGoal = null; panel.mesh.position.copy(panelPosFromDock()); panel.mesh.lookAt(C);
+  }
+}
+function endGrab() {
+  const g = grab; if (!g) return;
+  grab = null;
+  if (g.kind === 'lab') { wantAnchor = true; layoutPanel(false); layoutHandle(); lastHead = null; }
+}
+let moverNear = null;
+
 // ═════════════ input: controllers, hands and mouse ═════════════
 const raycaster = new THREE.Raycaster();
 const controllers = [];
@@ -725,15 +838,23 @@ const handleWorld = () => L.handle.getWorldPosition(new THREE.Vector3());
 const canPull = () => L.handle.visible && idleOrRollingBack() && !placing && !optionsOpen;
 const ctrlPos = (c) => new THREE.Vector3().setFromMatrixPosition(c.matrixWorld);
 function startPull(getPos) { pull = { getPos, start: getPos().clone() }; }
-function onSqueezeStart(c) {
-  if (!renderer.xr.isPresenting || !canPull()) return;
+function onSqueezeStart(c) {   // the grip button: the lanyard, the panel's bar or the lab's knob, up close or by pointing
+  if (!renderer.xr.isPresenting || frozen || grab || pull) return;
   unlockAudio(); setRayFrom(c);
-  if (ctrlPos(c).distanceTo(handleWorld()) < REACH || handleHit()) { startPull(() => ctrlPos(c)); pull.c = c; }
+  const at = ctrlPos(c);
+  if (canPull() && (at.distanceTo(handleWorld()) < REACH || handleHit())) { startPull(() => ctrlPos(c)); pull.c = c; return; }
+  if (canMovePanel() && at.distanceTo(barWorld()) < REACH) return startGrab('panel', c, false);
+  if (canMoveLab() && at.distanceTo(knobWorld()) < REACH) return startGrab('lab', c, false);
+  const bh = barHit(); if (bh) return startGrab('panel', c, true, bh);
+  const kh = knobHit(); if (kh) return startGrab('lab', c, true, kh);
 }
-function onSqueezeEnd(c) { if (pull && pull.c === c) { pull = null; L.handle.position.copy(handleLocal); } }
+function onSqueezeEnd(c) {
+  if (pull && pull.c === c) { pull = null; L.handle.position.copy(handleLocal); }
+  if (grab && grab.c === c) endGrab();
+}
 const jointPos = (h, name) => { const j = h.joints && h.joints[name]; return j && j.visible !== false ? j.getWorldPosition(new THREE.Vector3()) : null; };
 function updateHands() {
-  let near = false;
+  let near = false, mover = null;
   for (const h of hands) {
     const names = ['wrist', 'middle-finger-metacarpal', 'index-finger-tip', 'middle-finger-tip', 'ring-finger-tip'];
     const J = {}; for (const n of names) { const p = jointPos(h, n); if (p) J[n] = p; }
@@ -742,11 +863,23 @@ function updateHands() {
     const g = handGrabbing(J, h.userData.grabbing), was = h.userData.grabbing; h.userData.grabbing = g;
     const close = canPull() && palm.distanceTo(handleWorld()) < REACH;
     near = near || close;
-    if (g && !was && close && !pull) { unlockAudio(); startPull(() => jointPos(h, 'middle-finger-metacarpal') || jointPos(h, 'wrist') || palm); pull.hand = h; }
+    if (g && !was && close && !pull && !grab) { unlockAudio(); startPull(() => jointPos(h, 'middle-finger-metacarpal') || jointPos(h, 'wrist') || palm); pull.hand = h; }
+    else if (g && !was && !pull && !grab) {   // a fist at the panel's bar or the lab's knob moves it
+      if (canMovePanel() && palm.distanceTo(barWorld()) < REACH) startGrab('panel', h, false);
+      else if (canMoveLab() && palm.distanceTo(knobWorld()) < REACH) startGrab('lab', h, false);
+    }
     if (!g && was && pull && pull.hand === h) { pull = null; L.handle.position.copy(handleLocal); }
+    if (!g && was && grab && grab.hand === h) endGrab();
+    if (!grab) { if (canMovePanel() && palm.distanceTo(barWorld()) < REACH) mover = 'panel'; else if (canMoveLab() && palm.distanceTo(knobWorld()) < REACH) mover = 'lab'; }
   }
-  for (const c of controllers) if (c.userData.src && c.userData.src.targetRayMode === 'tracked-pointer' && canPull() && ctrlPos(c).distanceTo(handleWorld()) < REACH) near = true;
-  handleNear = near;
+  for (const c of controllers) {
+    if (!c.userData.src || c.userData.src.targetRayMode !== 'tracked-pointer') continue;
+    const at = ctrlPos(c);
+    if (canPull() && at.distanceTo(handleWorld()) < REACH) near = true;
+    else if (canMovePanel() && at.distanceTo(barWorld()) < REACH) mover = 'panel';
+    else if (canMoveLab() && at.distanceTo(knobWorld()) < REACH) mover = 'lab';
+  }
+  handleNear = near; moverNear = mover;
 }
 let handleNear = false;
 function onConnected(c, src) {
@@ -769,13 +902,17 @@ const trackHit = () => (canPredict() && idleOrRollingBack() ? raycaster.intersec
 let pull = null, drag = null;   // pulling the lanyard; dragging the prediction flag
 let heightMoved = 0;
 function onSelectStart(c) {
-  if (!renderer.xr.isPresenting) return;
+  if (!renderer.xr.isPresenting || frozen) return;
   unlockAudio();
   setRayFrom(c);
+  if (grab) return;
+  const bh = barHit(); if (bh) return startGrab('panel', c, true, bh);
   const ph = panel.mesh.visible ? panelHit() : null;
   if (ph) { c.userData.pressed = panel.buttonAt(ph.uv); return; }
   if (placing) { if (c.userData.target) finishPlacing(c.userData.target.clone()); return; }
   if (canPull() && (handleHit() || ctrlPos(c).distanceTo(handleWorld()) < REACH)) { startPull(() => ctrlPos(c)); pull.c = c; return; }
+  const kh = knobHit(); if (kh) return startGrab('lab', c, true, kh);
+  if (canMoveLab() && ctrlPos(c).distanceTo(knobWorld()) < REACH) return startGrab('lab', c, false);
   const th = trackHit(); if (th) { drag = { c }; setPrediction(th.point); }
 }
 function onSelectEnd(c) {
@@ -787,8 +924,10 @@ function onSelectEnd(c) {
   }
   if (pull && pull.c === c) { pull = null; L.handle.position.copy(handleLocal); }
   if (drag && drag.c === c) drag = null;
+  if (grab && grab.c === c) endGrab();
 }
 function setPrediction(worldPoint) {
+  if (frozen) return;
   const p = lab.worldToLocal(worldPoint.clone());
   const cm = Math.max(0, Math.min(RULER_CM, Math.round(-p.x * 100)));
   test.predCm = cm; test.predFor = predKey();
@@ -825,11 +964,19 @@ function xrUpdate(frame, dt) {
   xrFrames++;
   if (needsLayout && xrFrames > 3) { needsLayout = false; replace(); layoutPanel(true); }
   anchorTick(frame);
+  if (frozen) {   // only the teacher's message, in front of the student; the lab waits
+    for (const c of controllers) { c.userData.dot.visible = false; c.userData.line.visible = false; }
+    const goal = camera.position.clone().addScaledVector(new THREE.Vector3(0, 0, -1).applyQuaternion(camera.quaternion), 1.1);
+    freezePanel.mesh.position.lerp(goal, xrFrames < 5 ? 1 : 1 - Math.exp(-dt * 4));
+    freezePanel.mesh.lookAt(camera.position);
+    return;
+  }
+  for (const c of controllers) c.userData.line.visible = true;
   for (const c of controllers) {
     const u = c.userData; if (!u.src) { u.dot.visible = false; continue; }
     setRayFrom(c);
     const hit = panel.mesh.visible ? panelHit() : null;
-    const other = hit ? null : handleHit() || trackHit();
+    const other = hit ? null : barHit() || knobHit() || handleHit() || trackHit();
     const h = hit || other;
     u.line.scale.z = h ? h.distance : 3; u.dot.visible = !!h; if (h) u.dot.position.copy(h.point);
     u.panelHit = hit;
@@ -852,7 +999,9 @@ function xrUpdate(frame, dt) {
   }
   updateHands();
   updatePull();
+  updateGrab();
   followPanel(dt);
+  placeMovers();
 }
 
 // mouse / touch on the preview
@@ -931,7 +1080,7 @@ function followAnchor(frame) {
   if (anchorWait) {   // restored from the saved copy: put the lab exactly where it was
     anchorWait = null; dbg.restores++;
     lab.position.copy(now.p); lab.rotation.set(0, now.yaw, 0); lab.visible = true;
-    hint.mesh.visible = false; layoutPanel(true); layoutHandle();
+    hint.mesh.visible = false; layoutPanel(true, false); layoutHandle();
   } else if (anchorLast) {
     const dy = now.yaw - anchorLast.yaw;
     if (now.p.distanceTo(anchorLast.p) > 0.002 || Math.abs(dy) > 0.002) {   // the room "moved" (recentred): move the lab and panel with it
@@ -939,7 +1088,7 @@ function followAnchor(frame) {
         const rel = obj.position.clone().sub(anchorLast.p).applyAxisAngle(UP, dy);
         obj.position.copy(now.p).add(rel); obj.rotation.y += dy;
       }
-      if (dock) { dock.p.copy(now.p).add(dock.p.clone().sub(anchorLast.p).applyAxisAngle(UP, dy)); }
+      if (dock?.p) { dock.p.copy(now.p).add(dock.p.clone().sub(anchorLast.p).applyAxisAngle(UP, dy)); }
       dockedFrom = camera.position.clone().setY(0);   // dock again only after the student really walks from here
       panelGoal = null;
       lastHead = null;
@@ -961,7 +1110,7 @@ function recoverAnchor() {
 }
 // safety net: nothing is holding the lab and the view jumped (recentred), so place it again in front of the student
 function replaceIfUnpinned() {
-  if (mode !== 'ar' || anchor || anchorWait || placing || needsLayout || !lab.visible) return;
+  if (mode !== 'ar' || anchor || anchorWait || placing || needsLayout || !lab.visible || grab) return;
   dbg.replaced++; replace();
 }
 let lastHead = null;
@@ -1003,14 +1152,14 @@ function onSessionStart() {
   anchorHandle = null; anchorLostAt = 0; anchorWait = null; lastHead = null;
   renderer.xr.getReferenceSpace()?.addEventListener?.('reset', () => replaceIfUnpinned('reset'));
   renderer.xr.getSession()?.addEventListener?.('visibilitychange', () => { lastHead = null; });
-  refresh();
+  setFrozen(frozen); refresh();
 }
 function onSessionEnd() {
-  mode = 'desktop'; placing = false; pull = null; drag = null;
+  mode = 'desktop'; placing = false; pull = null; drag = null; grab = null; knob.visible = knobStem.visible = bar.visible = false;
   anchor = null; anchorLast = null; wantAnchor = false; anchorGen++; anchorHandle = null; anchorWait = null;
   scene.background = BG; ground.visible = true; reticle.visible = false; hint.mesh.visible = false;
   controls.enabled = true; layoutDesktop(); onResize(); refresh();
-  $('start').hidden = false;
+  $('start').hidden = false; setFrozen(frozen);
 }
 
 // ═════════════ preview on a screen (Chromebook, projector) ═════════════
@@ -1046,7 +1195,8 @@ function syncPage() {
   $('title').textContent = t.labTitle; $('kicker').textContent = t.labSub; $('intro').textContent = t.intro;
   $('l-lang').textContent = t.language; $('l-size').textContent = t.size; $('l-acc').textContent = t.supports;
   $('btn-ar').textContent = t.enterAR; $('btn-vr').textContent = t.enterVR; $('btn-preview').textContent = t.preview;
-  $('credit').textContent = t.credit; $('privacy').textContent = t.privacy;
+  $('credit').textContent = t.credit; $('privacy').textContent = ROOM ? t.privacyConsole : t.privacy;
+  syncHeadsetRow(t);
   document.querySelectorAll('[data-lang]').forEach((b) => b.classList.toggle('sel', b.dataset.lang === S.lang));
   const sz = $('size-seg'); sz.innerHTML = '';
   for (const s of SIZES) { const b = document.createElement('button'); b.textContent = t.sizes[s]; b.classList.toggle('sel', s === S.size); b.onclick = () => { setSize(s); syncPage(); refresh(); }; sz.appendChild(b); }
@@ -1054,6 +1204,26 @@ function syncPage() {
   const acc = $('acc-seg'); acc.innerHTML = '';
   for (const k of ['big', 'calm', 'num']) { const b = document.createElement('button'); b.textContent = t[{ big: 'bigText', calm: 'calm', num: 'number' }[k]]; b.classList.toggle('sel', S[k]); b.onclick = () => { S[k] = !S[k]; syncPage(); updateLoupe(); refresh(); placeDesktopPanel(); }; acc.appendChild(b); }
   $('menu').textContent = '☰ ' + t.labTitle;
+}
+// headset number (only when the teacher console is on): the sticker number decides which teacher page this headset follows
+let pickingHeadset = false;
+function syncHeadsetRow(t) {
+  $('hs-row').hidden = !consoleOn() || roomOff || !!roomParam;
+  if ($('hs-row').hidden) { $('status').dataset.console = ''; return; }
+  $('l-hs').textContent = t.headset;
+  const g = groupOf(HEADSET), picking = HEADSET == null || pickingHeadset;
+  const now = $('hs-now'); now.innerHTML = '';
+  if (!picking) {
+    now.append(t.headsetIs(HEADSET, g?.name) + ' · ');
+    const ch = document.createElement('a'); ch.href = '#'; ch.textContent = t.change; ch.style.color = 'var(--gold)';
+    ch.onclick = (e) => { e.preventDefault(); pickingHeadset = true; syncPage(); }; now.append(ch);
+  }
+  const seg = $('hs-seg'); seg.innerHTML = ''; seg.hidden = !picking;
+  for (const gr of GROUPS) for (let n = gr.first; n <= gr.last; n++) {
+    const b = document.createElement('button'); b.textContent = String(n); b.dataset.hs = n; b.classList.toggle('sel', n === HEADSET);
+    b.onclick = () => { pickingHeadset = false; setHeadset(n); }; seg.appendChild(b);
+  }
+  $('hs-note').textContent = [picking ? t.headsetHint : '', t.consoleStatus[roomStatus] || ''].filter(Boolean).join(' ');
 }
 document.querySelectorAll('[data-lang]').forEach((b) => { b.onclick = () => { S.lang = b.dataset.lang; relabel(); syncPage(); refresh(); placeDesktopPanel(); }; });
 $('btn-ar').onclick = () => enterXR('ar');
@@ -1067,6 +1237,80 @@ async function checkXR() {
   $('noxr').hidden = !!(ar || vr); $('noxr').textContent = T().noXR;
 }
 
+// ═════════════ teacher console (optional, read-only) ═════════════
+// The headset only LISTENS to a tiny settings record for its room; it never sends anything. Only changes are applied,
+// so a student's own choices (language, size, supports) stay until the teacher changes that same setting.
+const freezeScene = new THREE.Scene();
+const freezePanel = new LabPanel(560); freezeScene.add(freezePanel.mesh);
+const roomParam = (params.get('room') || '').toLowerCase();
+const roomOff = /^(off|none)$/.test(roomParam);
+const groupOf = (n) => (n == null ? null : GROUPS.find((g) => n >= g.first && n <= g.last) || null);
+const validHeadset = (v) => v != null && /^1?[0-9]$/.test(String(v)) && !!groupOf(+v);
+let HEADSET = consoleOn() ? readHeadset(params.get('headset'), validHeadset) : null;
+const roomFor = () => (roomOff || !consoleOn() ? '' : roomParam || groupOf(HEADSET)?.room || DEFAULT_ROOM);
+let ROOM = roomFor(), roomStatus = consoleOn() && ROOM ? 'connecting' : 'off', roomSub = null;
+let remote = {}, want = null, restartSeen = null;
+
+async function startListening() {
+  if (!ROOM) return;
+  const room = ROOM;
+  try {
+    const mod = await import('./classroom.js');
+    const sub = await mod.listen(room, (r) => { if (room === ROOM) applyRoom(r); }, (st) => { if (room === ROOM) { roomStatus = st; syncPage(); } });
+    if (room !== ROOM) sub?.stop(); else roomSub = sub;
+  } catch (e) { console.warn('classroom', e); roomStatus = 'error'; syncPage(); }
+}
+function setHeadset(n) {
+  if (!validHeadset(n)) return;
+  HEADSET = +n; saveHeadset(n);
+  const r = roomFor();
+  if (r !== ROOM) { roomSub?.stop(); roomSub = null; ROOM = r; remote = {}; restartSeen = null; roomStatus = 'connecting'; startListening(); }
+  else applyRoom(remote);   // same room: this headset's own supports or pause may differ
+  syncPage();
+}
+// what the room asks of THIS headset: the room-wide supports, plus any set for its number
+function wanted(r) {
+  const mine = (HEADSET != null && r.access?.[HEADSET]) || '';
+  return { big: r.bigText === true || mine.includes('b'), calm: r.calm === true || mine.includes('c'), num: r.num === true || mine.includes('n'),
+    lanyard: !(r.fireButton === true || mine.includes('f')), lang: mine.includes('s') ? 'es' : r.lang || null };
+}
+function applyRoom(r) {
+  const changed = (k) => JSON.stringify(r[k]) !== JSON.stringify(remote[k]);
+  let restart = false;
+  if (changed('path') || changed('start') || changed('variable')) {
+    const path = r.path || LINK.path, start = path === 'full' && (r.start || LINK.start) === 'plan' ? 'plan' : 'try', lock = r.variable || LINK.lock;
+    if (path !== PATH || start !== START || lock !== S.lock) { PATH = path; START = start; S.lock = lock; GD.key = lock || 'cannon'; restart = true; }
+  }
+  if (changed('sizes')) {
+    SIZES = r.sizes && r.sizes.length ? r.sizes : [...LINK.sizes];
+    if (!SIZES.includes(S.size)) setSize(SIZES[0]);
+  }
+  // supports and language: only what changed since the last message (a support turned off goes back to the link's setting)
+  const w = wanted(r), prev = want || wanted({});
+  for (const k of ['big', 'calm', 'num', 'lanyard']) if (w[k] !== prev[k]) S[k] = w[k] === wanted({})[k] ? LINK[k] : w[k];
+  if (w.lang !== prev.lang || (want === null && w.lang)) { S.lang = w.lang || LINK.lang; relabel(); }
+  want = w;
+  // "Start over" for everyone (only if pressed while this headset was listening)
+  if (restartSeen === null) restartSeen = r.restartAt || 0;
+  else if (r.restartAt > restartSeen) { restartSeen = r.restartAt; restart = true; }
+  remote = { ...r };
+  setFrozen(r.freeze || (HEADSET != null && (r.paused || []).includes(HEADSET) ? 'paused' : null));
+  if (restart) startOver();
+  syncPage(); updateLoupe(); refresh(); placeDesktopPanel();
+}
+function setFrozen(kind) {
+  if (kind !== frozen) {
+    frozen = kind;
+    if (kind) { pull = null; drag = null; mouseDrag = false; endGrab(); panel.setHover(null); if (L.handle) L.handle.position.copy(handleLocal); }
+  }
+  if (kind) {
+    const t = T();
+    freezePanel.show({ kicker: t.freezeFrom, title: t.freeze[kind], blocks: [] });
+    $('freeze-from').textContent = t.freezeFrom; $('freeze-text').textContent = t.freeze[kind];
+  }
+  $('freeze').hidden = !kind || renderer.xr.isPresenting;
+}
+
 // ═════════════ main loop ═════════════
 const clock = new THREE.Clock();
 renderer.setAnimationLoop((time, frame) => {
@@ -1075,7 +1319,8 @@ renderer.setAnimationLoop((time, frame) => {
   else { controls.update(); }
   updateAnim(dt); updateSmoke(dt); updateRope(); placeLoupe(); faceLabels();
   if (mode === 'desktop') placeDesktopPanel();
-  renderer.render(scene, camera);
+  if (frozen && renderer.xr.isPresenting) { freezeScene.background = mode === 'ar' ? null : BG; renderer.render(freezeScene, camera); }
+  else renderer.render(scene, camera);
 });
 
 // ═════════════ start ═════════════
@@ -1084,6 +1329,7 @@ layoutDesktop();
 applySettings(settings);
 relabel();
 refresh();
+startListening();
 L.ball.visible = false;
 L.ready.then((m) => {
   model = m.model; wheels = m.wheels;
@@ -1096,9 +1342,10 @@ window.__dbg = {
   THREE, S, L, panel, loupe, hint, camera, lab, scene, controls,
   state: () => ({ phase, optionsOpen, planKey, levelIdx: test.levelIdx, data: JSON.parse(JSON.stringify(test.data)), predCm: test.predCm, predFor: test.predFor,
     anim: anim ? { kind: anim.kind, t: anim.t, playing: anim.playing } : null, cannonX: L.cannonX, mode, placing, size: S.size, lang: S.lang,
-    lastCm: lastShot?.cm ?? null, shotStartX, path: PATH, awaitRecord, guided: { key: GD.key, i: GD.i, results: [...GD.results] }, challenge: ch.target ? { target: ch.target.cm, result: ch.result } : null, settings: { ...settings },
+    lastCm: lastShot?.cm ?? null, shotStartX, path: PATH, awaitRecord, guided: { key: GD.key, i: GD.i, results: [...GD.results] }, challenge: ch.target ? { target: ch.target.cm, result: ch.result } : null, settings: { ...settings }, frozen, room: ROOM, headset: HEADSET, roomStatus, sizes: [...SIZES], lock: S.lock, big: S.big, calm: S.calm, num: S.num, lanyard: S.lanyard,
     panelOverflow: panel.overflow, labVisible: lab.visible, handleVisible: L.handle.visible, loupe: loupe.mesh.visible }),
-  press: (id) => onButton(id),
+  press: (id) => onButton(id), freezePanel,
+  knobWorld: () => knobWorld().toArray(), barWorld: () => barWorld().toArray(), movers: () => ({ knob: knob.visible, bar: bar.visible, grab: grab?.kind || null, dock: dock?.kind || null }),
   predictCm: (cm) => setPrediction(lab.localToWorld(new THREE.Vector3(-cm / 100, 0, RULER_Z))),
   handleWorld: () => L.handle.getWorldPosition(new THREE.Vector3()).toArray(),
   trackWorld: (cm) => lab.localToWorld(new THREE.Vector3(-cm / 100, 0, RULER_Z)).toArray(),

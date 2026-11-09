@@ -7,7 +7,7 @@ Interactive physics labs for the district's Quest 3 headsets (WebXR, passthrough
 
 ## What students do
 
-There are two paths. The teacher chooses, through the link.
+There are two paths. The teacher chooses, through the link or the teacher console.
 
 **Guided (the default):** one sentence and one big button at a time, about 8 minutes, so students can work without constant help.
 
@@ -44,7 +44,23 @@ There are two paths. The teacher chooses, through the link.
 - **The ball:** it hits the sandbags, falls, bounces and rolls to a stop.
 - **Powder:** cloth cartridge bags of 0.4 kg each, as in the Civil War, with a powder keg beside them. Three bags (1.2 kg) is about a real 12-pounder's full charge.
 - **The panel:** it floats like a whiteboard above the lab, or beside it on the right when that would be too high, so it never covers the cannon. Its bottom edge stays put when its content changes.
+- **Moving things by hand:**
+  - **The lab:** a round knob with four arrows sits at the front left of the lab (on the desk at desk size, at waist height for half and life size). Grab it (grip, trigger, pinch or a closed hand, or point at it and pull the trigger) and slide the lab. It keeps facing the student, and it's pinned again where it's let go. At desk size it can also be lifted, to sit on a real desk.
+  - **The panel:** a dotted bar under the panel moves it the same way. It then stays in that spot, beside the lab, until the lab is moved or placed again.
+  - **Options → Place it again** still starts placement over (pointing at the floor).
 - **Staying in place:** the lab is pinned to the real room with a WebXR anchor, and a copy is saved on the headset. If the headset loses the anchor (for example after it is taken off to write), the lab comes back to the same spot. The copy's reference code is kept only in memory.
+
+## Teacher console (optional)
+
+`teacher.html` lets a signed-in teacher change the lab on every headset in their group from a Chromebook, during class:
+
+- **Everyone:** Eyes up, Wait, Time to finish, Take off headset, Resume, and Start over on every headset.
+- **The lab:** path (guided or full), start at Plan, variable, sizes, language.
+- **Supports:** for every headset, or for one headset by its sticker number. Pause one headset.
+
+It uses its own Firebase project (`mmuusd-labs`), separate from the exhibits'. Headsets only listen and never send anything. It's off until `js/firebase-config.js` is filled in. Setup: `firebase/SETUP.md`.
+
+A console setting wins over the link while it's set; **Default** on the console goes back to what the link says. Headsets follow their group by the number on their sticker (the same number as in the exhibits).
 
 ## Link settings (ArborXR WebXR link)
 
@@ -60,6 +76,8 @@ There are two paths. The teacher chooses, through the link.
 | `number` | `number=on` | Show number: the reading appears in the magnifier and table |
 | `fire` | `fire=button` | no lanyard; Fire button only |
 | `start` | `start=plan` | with `path=full`: skip "Try it" and the 3rd-law question (for day 2) |
+| `headset` | `headset=3` | this headset's sticker number (for the teacher console; normally picked once on the start page) |
+| `room` | `room=g6-lab` | follow `teacher.html?room=g6-lab` instead of the group; `room=off` ignores the console |
 | `debug` | `debug=1` | console logging |
 
 ## Files
@@ -72,8 +90,14 @@ js/scene.js         the cannon, ruler, sandbags, flags, arrows and lanyard, in r
 js/ui3d.js          the headset panels, the magnifier, the ruler texture
 js/i18n.js          every word, in English and Spanish
 js/audio.js         the boom (made in code, no sound file)
+js/classroom.js     the headset side of the teacher console (read-only)
+js/headset.js       this headset's sticker number (shared with the exhibits)
+js/firebase-config.js  the console's Firebase project, teachers and headset groups
+js/teacher.js       the teacher console (teacher.html)
+teacher.html        the teacher console page
+firebase/           database rules and SETUP.md
 labs/cannon/cannon.glb   the cannon model (prepared for the Quest)
-vendor/             three.js r170 (no CDNs)
+vendor/             three.js r170 and the Firebase bundle (no CDNs)
 tests/              node tests/run.mjs (needs Playwright with Chromium)
 tools/package.py    builds an update zip
 ```
@@ -83,7 +107,8 @@ tools/package.py    builds an update zip
 - **Cannon model:** "Civil War Cannon" (https://sketchfab.com/3d-models/civil-war-cannon-77642765da02400cbc8db58b5532ff9e) by Zack_Hawley (https://sketchfab.com/Zack_Hawley), licensed under CC BY 4.0 (http://creativecommons.org/licenses/by/4.0/).
   - Changes: simplified (about 858k to 127k triangles), small parts given plain colours, textures resized to 512, and the wheels set up to turn.
 - **three.js:** MIT licence (`vendor/THREE-LICENSE.txt`).
+- **Firebase JS SDK** (teacher console only): Apache 2.0 licence (`vendor/firebase/LICENSE.txt`).
 
 ## Privacy
 
-Nothing is sent or saved. There are no accounts, no analytics and no network requests beyond loading the site's own files. See `PRIVACY.md`.
+Nothing a student does is sent or saved. There are no student accounts and no analytics. With the teacher console on, headsets only listen for their room's settings, and the headset keeps only its own sticker number. See `PRIVACY.md`.

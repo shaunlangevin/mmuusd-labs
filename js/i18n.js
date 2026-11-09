@@ -13,6 +13,13 @@ export const UI = {
     noXR: 'This lab is made for a Quest headset. You can preview it on this screen.',
     credit: 'Cannon model: "Civil War Cannon" by Zack_Hawley, CC BY 4.0 (sketchfab.com). Changes: simplified for headsets.',
     privacy: 'Nothing you do here is saved or sent anywhere.',
+    privacyConsole: 'Nothing you do here is saved or sent anywhere. The headset only listens for your teacher’s settings.',
+    headset: 'Which headset is this?', headsetHint: 'The number on its sticker. It tells the headset which teacher page to follow.',
+    headsetIs: (n, g) => `Headset ${n}` + (g ? ` · ${g}` : ''), change: 'Change',
+    consoleStatus: { connected: 'Teacher console: connected', connecting: 'Teacher console: connecting…', error: 'Teacher console: not reachable (the lab still works on its own)' },
+    freezeFrom: 'Message from your teacher',
+    freeze: { eyes: 'Eyes up! Please look at your teacher.', wait: 'Pause. Please wait for instructions.', remove: 'Please carefully take off your headset.',
+      done: 'Great job! Time to finish up.', paused: 'Your teacher paused this headset. Please wait.' },
     // placing
     placeFloor: 'Point at the floor where the cannon should go, then pull the trigger (or pinch).',
     // try it
@@ -96,7 +103,7 @@ export const UI = {
     newTarget: 'New target', target: 'target',
     // options
     startOver: 'Start over (next pair)', restartSure: 'Tap again to start over',
-    options: 'Options', close: 'Close', move: 'Move the cannon', exit: 'Exit headset', lang: 'Language',
+    options: 'Options', close: 'Close', move: 'Place it again', exit: 'Exit headset', lang: 'Language',
     // variables
     vars: { ball: 'Ball', cannon: 'Cannon weight', powder: 'Powder', wheels: 'Wheels' },
     varsThe: { ball: 'the ball', cannon: 'the cannon\'s weight', powder: 'the powder', wheels: 'the wheels' },
@@ -121,6 +128,13 @@ export const UI = {
     noXR: 'Este laboratorio está hecho para un visor Quest. Puedes verlo en esta pantalla.',
     credit: 'Modelo del cañón: "Civil War Cannon" de Zack_Hawley, CC BY 4.0 (sketchfab.com). Cambios: simplificado para visores.',
     privacy: 'Nada de lo que haces aquí se guarda ni se envía.',
+    privacyConsole: 'Nada de lo que haces aquí se guarda ni se envía. El visor solo escucha los ajustes de tu maestro o maestra.',
+    headset: '¿Qué visor es este?', headsetHint: 'El número de su etiqueta. Le dice al visor qué página de maestro debe seguir.',
+    headsetIs: (n, g) => `Visor ${n}` + (g ? ` · ${g}` : ''), change: 'Cambiar',
+    consoleStatus: { connected: 'Consola del maestro: conectada', connecting: 'Consola del maestro: conectando…', error: 'Consola del maestro: sin conexión (el laboratorio sigue funcionando solo)' },
+    freezeFrom: 'Mensaje de tu maestro o maestra',
+    freeze: { eyes: '¡Atención! Por favor, mira a tu maestro o maestra.', wait: 'Pausa. Por favor, espera instrucciones.', remove: 'Por favor, quítate el visor con cuidado.',
+      done: '¡Buen trabajo! Es hora de terminar.', paused: 'Tu maestro o maestra pausó este visor. Por favor, espera.' },
     placeFloor: 'Apunta al piso donde debe ir el cañón y aprieta el gatillo (o pellizca).',
     tryTitle: '¡Pruébalo!',
     tryBody: 'Agarra la cuerda de disparo (la manija frente a ti) y jálala para disparar el cañón.',
@@ -193,7 +207,7 @@ export const UI = {
     chHitNoNum: '¡En la línea!', chFarNoNum: 'Se pasó. Inténtalo otra vez.', chShortNoNum: 'Se quedó corto. Inténtalo otra vez.',
     newTarget: 'Nueva meta', target: 'meta',
     startOver: 'Empezar de nuevo (otra pareja)', restartSure: 'Toca otra vez para empezar de nuevo',
-    options: 'Opciones', close: 'Cerrar', move: 'Mover el cañón', exit: 'Salir del visor', lang: 'Idioma',
+    options: 'Opciones', close: 'Cerrar', move: 'Colocarlo de nuevo', exit: 'Salir del visor', lang: 'Idioma',
     vars: { ball: 'Bala', cannon: 'Peso del cañón', powder: 'Pólvora', wheels: 'Ruedas' },
     varsThe: { ball: 'la bala', cannon: 'el peso del cañón', powder: 'la pólvora', wheels: 'las ruedas' },
     levels: {

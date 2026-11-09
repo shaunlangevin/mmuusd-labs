@@ -263,3 +263,28 @@ export function rulerTexture(lengthCm) {
   const tex = new THREE.CanvasTexture(c); tex.colorSpace = THREE.SRGBColorSpace; tex.anisotropy = 8;
   return { tex, aspect: c.width / c.height, padFrac: 20 / c.width };
 }
+
+// ── grab handles: a round "move" knob (four arrows) for the lab, and a dotted bar for the panel ──
+export function moveKnobTexture() {
+  const c = document.createElement('canvas'); c.width = c.height = 128;
+  const ctx = c.getContext('2d');
+  ctx.fillStyle = 'rgba(22,19,16,0.88)'; ctx.beginPath(); ctx.arc(64, 64, 60, 0, Math.PI * 2); ctx.fill();
+  ctx.lineWidth = 7; ctx.strokeStyle = GOLD; ctx.beginPath(); ctx.arc(64, 64, 56, 0, Math.PI * 2); ctx.stroke();
+  ctx.fillStyle = INK; ctx.strokeStyle = INK; ctx.lineWidth = 8; ctx.lineCap = 'round';
+  ctx.beginPath(); ctx.moveTo(64, 30); ctx.lineTo(64, 98); ctx.moveTo(30, 64); ctx.lineTo(98, 64); ctx.stroke();
+  for (const a of [0, 1, 2, 3]) {   // four arrowheads
+    ctx.save(); ctx.translate(64, 64); ctx.rotate(a * Math.PI / 2);
+    ctx.beginPath(); ctx.moveTo(0, -44); ctx.lineTo(-14, -26); ctx.lineTo(14, -26); ctx.closePath(); ctx.fill();
+    ctx.restore();
+  }
+  const t = new THREE.CanvasTexture(c); t.colorSpace = THREE.SRGBColorSpace; return t;
+}
+export function grabBarTexture() {
+  const c = document.createElement('canvas'); c.width = 256; c.height = 40;
+  const ctx = c.getContext('2d');
+  ctx.fillStyle = 'rgba(22,19,16,0.88)'; roundRect(ctx, 2, 2, 252, 36, 18); ctx.fill();
+  ctx.lineWidth = 3; ctx.strokeStyle = GOLD; roundRect(ctx, 2, 2, 252, 36, 18); ctx.stroke();
+  ctx.fillStyle = INK;
+  for (let i = 0; i < 6; i++) for (const y of [14, 26]) { ctx.beginPath(); ctx.arc(98 + i * 12, y, 3.2, 0, Math.PI * 2); ctx.fill(); }
+  const t = new THREE.CanvasTexture(c); t.colorSpace = THREE.SRGBColorSpace; return t;
+}
