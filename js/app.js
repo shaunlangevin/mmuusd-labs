@@ -64,7 +64,11 @@ const reticle = new THREE.Mesh(new THREE.RingGeometry(0.11, 0.15, 48).rotateX(-M
 reticle.renderOrder = 20; reticle.visible = false; scene.add(reticle);
 
 // ═════════════ lab state ═════════════
-const START = params.get('start') === 'plan' ? 'plan' : 'try';   // ?start=plan skips "Try it" and the 3rd-law question (day 2)
+// Two paths. The default is GUIDED: one sentence and one big button at a time, about 8 minutes, so students can work
+// without constant help: Try it → which push was bigger? → compare two settings (predict, fire, record) → explain.
+// The teacher switches on the full investigation (plan, 3 trials per level, table, challenge) with ?path=full.
+const PATH = params.get('path') === 'full' ? 'full' : 'guided';
+const START = PATH === 'full' && params.get('start') === 'plan' ? 'plan' : 'try';   // ?path=full&start=plan skips "Try it" and the 3rd-law question (day 2)
 let phase = START;             // try | q3 | watch | answer | plan | test | explain | challenge
 let confirmRestart = false;
 let optionsOpen = false;
@@ -72,6 +76,12 @@ let q3Answer = null;
 let settings = { ...DEFAULTS };
 let planKey = S.lock;          // the variable being tested
 const test = { levelIdx: 0, data: {}, predCm: null, predFor: null, arrows: false };
+// guided comparison: two shots, the lightest and heaviest setting of one variable (the cannon unless the link locks another)
+const GD = { key: S.lock || 'cannon', i: 0, results: [] };
+const gLevels = () => { const ls = VARS[GD.key]; return [ls[0], ls[ls.length - 1]]; };
+const gLevel = () => gLevels()[GD.i];
+const gSettings = () => ({ ...DEFAULTS, [GD.key]: gLevel().id });
+let awaitRecord = false;       // after a measured shot: "Record your results"; the next shot waits for "I recorded it"
 const ch = { target: null, last: null, result: null };
 let lastShot = null;           // the most recent shot (for slow motion)
 let rand = Math.random;        // tests can swap in a repeatable one
@@ -86,6 +96,16 @@ const rows = () => test.data;
 const countFor = (id) => (rows()[id] || []).length;
 const allRowsDone = () => planKey && levels(planKey).every((l) => countFor(l.id) >= 3);
 function settingsForTest() { const s = { ...DEFAULTS }; if (planKey) s[planKey] = curLevel().id; return s; }
+const predKey = () => (phase === 'test' ? curLevel().id : phase === 'gcomp' ? 'g' + GD.i : null);   // which shot the flag belongs to
+const predicted = () => predKey() !== null && test.predFor === predKey();
+const canPredict = () => !awaitRecord && ((phase === 'test' && countFor(curLevel().id) < 3) || (phase === 'gcomp' && GD.results.length === GD.i));
+function canFireNow() {   // the shot that's allowed right now (the lanyard only shows when it is)
+  if (awaitRecord) return false;
+  if (phase === 'try' || phase === 'challenge') return true;
+  if (phase === 'test') return predicted() && countFor(curLevel().id) < 3;
+  if (phase === 'gcomp') return predicted() && GD.results.length === GD.i;
+  return false;
+}
 
 // ═════════════ the panel: what it shows in each phase ═════════════
 function panelSpec() {
@@ -101,7 +121,11 @@ function panelSpec() {
     case 'q3': return { kicker, title: t.q3Title, blocks: [{ p: t.q3Body },
       { row: [{ id: 'q3:ball', label: t.q3Ball }, { id: 'q3:cannon', label: t.q3Cannon }, { id: 'q3:same', label: t.q3Same }], h: 96 }, optRow] };
     case 'answer': return { kicker, title: q3Answer === 'same' ? t.ansRight : t.ansSurprise, blocks: [{ p: t.ansBody }, { p: t.ansThink, style: 'em' },
-      { row: [{ id: 'replay', label: '⟲ ' + t.slowmo, w: 1 }, { id: 'toPlan', label: t.toPlan + ' ▶', primary: true, w: 1.4 }], h: 92 }, optRow] };
+      { row: [{ id: 'replay', label: '⟲ ' + t.slowmo, w: 1 }, PATH === 'full' ? { id: 'toPlan', label: t.toPlan + ' ▶', primary: true, w: 1.4 } : { id: 'toCompare', label: t.gNext, primary: true, w: 1.4 }], h: 92 }, optRow] };
+    case 'gcomp': return guidedSpec();
+    case 'gexplain': return { kicker, title: t.gExplainTitle, blocks: [{ p: t.gExplainBody }, { p: t.gExplainWrite, style: 'dim' },
+      { row: [{ id: 'replay', label: '⟲ ' + t.slowmo, w: 1, disabled: busy || !lastShot }, { id: 'gDone', label: t.gDoneBtn, primary: true, w: 1.4 }], h: 96 }, optRow] };
+    case 'gdone': return { kicker, title: t.gDoneTitle, blocks: [{ p: t.gDoneBody }, { row: [{ id: 'again', label: '⟲ ' + t.tryAgain, primary: true }], h: 96 }, optRow] };
     case 'plan': return planSpec();
     case 'test': return testSpec();
     case 'explain': return { kicker, title: t.explainTitle, blocks: [{ p: t.explainBody }, { p: t.wordBank, style: 'label', after: 8 }, { chips: t.words }, { p: t.newQuestion, style: 'em' },
@@ -109,6 +133,25 @@ function panelSpec() {
     case 'challenge': return challengeSpec();
   }
   return { kicker, title: '', blocks: [] };
+}
+function guidedSpec() {
+  const t = T(), k = GD.key, lv = gLevel(), returning = anim && anim.kind === 'return';
+  const blocks = [{ p: t.gShot(GD.i + 1, `${t.vars[k]}: ${t.levels[lv.id]}`), style: 'gold' }];
+  const optRow = { row: [{ id: 'options', label: '⚙ ' + t.options }], h: 70, after: 0 };
+  if (awaitRecord) {   // "Record your results", then one button
+    const cm = Math.round(GD.results[GD.i]);
+    blocks.push({ p: t.recBody(t.levels[lv.id]) });
+    if (S.num) blocks.push({ p: t.recNum(cm), style: 'big' });
+    blocks.push({ row: [{ id: 'recorded', label: t.recorded, primary: true }], h: 100 }, optRow);
+    return { kicker: t.labTitle, title: t.recTitle, blocks };
+  }
+  if (GD.i === 1) blocks.push({ p: t.gChanged[k] });
+  const screen = mode === 'desktop';
+  if (returning) blocks.push({ p: t.rollingBack, style: 'em' });
+  else if (!predicted()) blocks.push({ p: screen ? t.stepPredictScreen : t.stepPredict, style: 'em' });
+  else blocks.push({ p: screen || !S.lanyard ? t.stepFireScreen : t.stepFire, style: 'em' });
+  blocks.push({ row: [{ id: 'fire', label: t.fire, primary: true, disabled: !(predicted() && !(anim && anim.kind !== 'return')) }], h: 100 }, optRow);
+  return { kicker: t.labTitle, title: t.gTitle[k], blocks };
 }
 function planSpec() {
   const t = T(), blocks = [];
@@ -138,6 +181,7 @@ function tableBlock() {
 }
 function testStep() {
   const t = T(), n = countFor(curLevel().id);
+  if (awaitRecord) return t.recFull(n) + (S.num && lastShot ? ' ' + t.recNum(Math.round(lastShot.cm)) : '');
   if (anim && anim.kind === 'return') return t.rollingBack;
   if (allRowsDone()) return t.allDone;
   if (n >= 3) return t.stepRowDone + ' ' + t.stepPick;
@@ -148,14 +192,17 @@ function testStep() {
 }
 function testSpec() {
   const t = T(), busy = !!anim && anim.kind !== 'return';
-  const lvRow = { row: levels(planKey).map((l, i) => ({ id: 'level:' + i, label: (countFor(l.id) >= 3 ? '✓ ' : '') + t.levels[l.id], sel: i === test.levelIdx, disabled: busy })), h: 84 };
-  const canFire = !busy && test.predFor === curLevel().id && countFor(curLevel().id) < 3;
-  return { kicker: t.labTitle, title: `${t.testing} ${t.vars[planKey]}`, blocks: [
+  const lvRow = { row: levels(planKey).map((l, i) => ({ id: 'level:' + i, label: (countFor(l.id) >= 3 ? '✓ ' : '') + t.levels[l.id], sel: i === test.levelIdx, disabled: busy || awaitRecord })), h: 84 };
+  const canFire = !busy && canFireNow();
+  const actRow = awaitRecord
+    ? { row: [{ id: 'recorded', label: t.recorded, primary: true, w: 1.6 }, { id: 'replay', label: '⟲ ' + t.slowmo, disabled: busy || !lastShot }], h: 92 }
+    : { row: [{ id: 'fire', label: t.fire, primary: true, disabled: !canFire, w: 1.2 }, { id: 'replay', label: '⟲ ' + t.slowmo, disabled: busy || !lastShot }, { id: 'arrows', label: test.arrows ? t.arrowsOn : t.arrowsOff, sel: test.arrows }], h: 88 };
+  return { kicker: t.labTitle, title: awaitRecord ? t.recTitle : `${t.testing} ${t.vars[planKey]}`, blocks: [
     lvRow,
     { p: testStep(), style: 'em' },
-    { row: [{ id: 'fire', label: t.fire, primary: true, disabled: !canFire, w: 1.2 }, { id: 'replay', label: '⟲ ' + t.slowmo, disabled: busy || !lastShot }, { id: 'arrows', label: test.arrows ? t.arrowsOn : t.arrowsOff, sel: test.arrows }], h: 88 },
+    actRow,
     tableBlock(),
-    { row: [{ id: 'backPlan', label: '◀ ' + t.back }, { id: 'explain', label: t.explain + ' ▶', primary: allRowsDone() }], h: 80 },
+    { row: [{ id: 'backPlan', label: '◀ ' + t.back, disabled: awaitRecord }, { id: 'explain', label: t.explain + ' ▶', primary: allRowsDone() && !awaitRecord, disabled: awaitRecord }], h: 80 },
     { row: [{ id: 'options', label: '⚙ ' + t.options }], h: 70, after: 0 },
   ] };
 }
@@ -176,14 +223,15 @@ function challengeSpec() {
 function replaySpec() {
   const t = T(), a = anim;
   const playing = a.playing;
+  const looking = a.arrows && a.looked && !playing && Math.abs(a.t - LOOK_T) < 0.01;
   return { kicker: t.labTitle, title: t.replayTitle, blocks: [
-    { p: phase === 'watch' ? t.watchBody : realTimeText(), style: phase === 'watch' ? 'body' : 'gold' },
-    ...(phase === 'watch' ? [{ p: realTimeText(), style: 'gold' }] : []),
+    { p: looking ? t.lookArrows : phase === 'watch' ? t.watchBody : realTimeText(), style: looking ? 'em' : phase === 'watch' ? 'body' : 'gold' },
+    ...(phase === 'watch' || looking ? [{ p: realTimeText(), style: 'gold' }] : []),
     { row: [{ id: 'rp:restart', label: '⟲ ' + t.restart }, { id: 'rp:back', label: '◀ ' + t.back }, { id: 'rp:toggle', label: playing ? t.pause : t.play + ' ▶', primary: true }, { id: 'rp:step', label: t.step + ' ▶' }], h: 92 },
     { row: [{ id: 'rp:done', label: t.done }], h: 84, after: 0 },
   ] };
 }
-function realTimeText() { return T().realTime(anim ? replayRealTime(anim.t, anim.rec).toFixed(3) : '0.000'); }
+function realTimeText() { return T().realTime(anim ? replayRealTime(anim.t).toFixed(3) : '0.000'); }
 function optionsSpec() {
   const t = T(), blocks = [];
   blocks.push({ p: t.lang, style: 'label', after: 6 });
@@ -225,12 +273,16 @@ function onButton(id) {
   if (a === 'exit') { forgetHandle(); renderer.xr.getSession()?.end(); return; }
   if (a === 'fire') return fire();
   if (a === 'q3') { q3Answer = b; phase = 'watch'; return startReplay(true); }
-  if (a === 'replay') return startReplay(phase === 'answer' || test.arrows || phase === 'challenge');
+  if (a === 'replay') return startReplay(phase === 'answer' || phase === 'gexplain' || test.arrows || phase === 'challenge');
+  if (a === 'toCompare') return startCompare();
+  if (a === 'recorded') return recorded();
+  if (a === 'gDone') { phase = 'gdone'; return refresh(); }
+  if (a === 'again') return startOver();
   if (a === 'rp') return replayControl(b);
   if (a === 'toPlan') { phase = 'plan'; resetShots(); return refresh(); }
   if (a === 'plan') { planKey = b; return refresh(); }
   if (a === 'startTest') return startTest();
-  if (a === 'level') { test.levelIdx = +b; test.predCm = null; test.predFor = null; L.predFlag.visible = false; loupe.mesh.visible = false; applySettings(settingsForTest()); rollBack(); return refresh(); }
+  if (a === 'level') { if (awaitRecord) return; test.levelIdx = +b; test.predCm = null; test.predFor = null; L.predFlag.visible = false; loupe.mesh.visible = false; applySettings(settingsForTest()); rollBack(); return refresh(); }
   if (a === 'arrows') { test.arrows = !test.arrows; return refresh(); }
   if (a === 'backPlan') { phase = 'plan'; resetShots(); return refresh(); }
   if (a === 'explain') { phase = 'explain'; resetShots(); return refresh(); }
@@ -243,12 +295,25 @@ function onButton(id) {
 function startOver() {
   confirmRestart = false; optionsOpen = false;
   anim = null; smoke = null; L.puffs.forEach((p) => { p.visible = false; });
-  phase = START; q3Answer = null; planKey = S.lock; triesFired = 0;
+  phase = START; q3Answer = null; planKey = S.lock; triesFired = 0; awaitRecord = false; GD.i = 0; GD.results = [];
   test.levelIdx = 0; test.data = {}; test.predCm = null; test.predFor = null; test.arrows = false;
   ch.target = null; ch.result = null;
   applySettings({ ...DEFAULTS });
   resetShots(); L.target.visible = false;
   refresh();
+}
+function startCompare() {
+  phase = 'gcomp'; GD.i = 0; GD.results = []; awaitRecord = false; test.predCm = null; test.predFor = null;
+  resetShots(); applySettings(gSettings()); refresh();
+}
+// "I recorded it": the crew rolls the cannon back to the start line, ready for the next shot
+function recorded() {
+  awaitRecord = false; loupe.mesh.visible = false;
+  if (phase === 'gcomp') {
+    if (GD.i === 0) { GD.i = 1; test.predCm = null; test.predFor = null; L.predFlag.visible = false; applySettings(gSettings()); }
+    else { phase = 'gexplain'; L.predFlag.visible = false; }
+  }
+  if (!rollBack()) refresh();
 }
 function startTest() {
   phase = 'test'; test.levelIdx = 0; test.data = {}; test.predCm = null; test.predFor = null;
@@ -289,16 +354,16 @@ function relabel() {
 
 // ═════════════ firing ═════════════
 function fire() {
+  if (!canFireNow()) return;
   if (anim && anim.kind === 'return') { anim.then = fireNow; return; }   // Fire during the roll-back: it fires as soon as it's at 0
   if (anim) return;
-  if (phase === 'test' && (test.predFor !== curLevel().id || countFor(curLevel().id) >= 3)) return;
   if (rollBack(fireNow)) return;   // back to the start line first, then fire
   fireNow();
 }
 let shotStartX = 0;
 function fireNow() {
   shotStartX = L.cannonX;
-  const st = phase === 'test' ? settingsForTest() : { ...settings };
+  const st = phase === 'test' ? settingsForTest() : phase === 'gcomp' ? gSettings() : { ...settings };
   const r = trial(st, rand);
   lastShot = { st, r, cm: r.d * 100, forLevel: phase === 'test' ? curLevel().id : null, n: 0 };
   L.setCannonX(0, wheels); hideArrows(); loupe.mesh.visible = false;
@@ -314,14 +379,19 @@ function shotDone(rec) {
     const id = curLevel().id; (test.data[id] = test.data[id] || []).push(cm);
     rec.n = test.data[id].length;
     L.addGhost(cm, test.levelIdx, rec.n); sizeLabels();
+    awaitRecord = true;
+  } else if (phase === 'gcomp') {
+    GD.results[GD.i] = cm;
+    L.addGhost(cm, GD.i, 1, T().levels[gLevel().id]); sizeLabels();
+    awaitRecord = true;
   } else if (phase === 'challenge') {
     ch.result = { cm, hit: onTheLine(cm, ch.target.cm) };
     L.addGhost(cm, 0, L.ghosts.length + 1); sizeLabels();
   }
-  if (phase === 'test' || phase === 'challenge') { loupe.mesh.visible = true; updateLoupe(); }
+  if (phase === 'test' || phase === 'challenge' || phase === 'gcomp') { loupe.mesh.visible = true; updateLoupe(); }
   refresh();
 }
-function updateLoupe() { if (lastShot) loupe.set(Math.max(0, -L.cannonX * 100), S.num, phase === 'test' ? test.predCm : phase === 'challenge' ? ch.target?.cm : null, phase === 'challenge' ? '#2fae5a' : '#2f7de1'); }
+function updateLoupe() { if (lastShot) loupe.set(Math.max(0, -L.cannonX * 100), S.num, phase === 'test' || phase === 'gcomp' ? test.predCm : phase === 'challenge' ? ch.target?.cm : null, phase === 'challenge' ? '#2fae5a' : '#2f7de1'); }
 function hideArrows() { for (const a of Object.values(L.arrows)) a.visible = false; }
 
 // After the ball hits the sandbags it loses almost all its speed, bounces back a little, falls under gravity,
@@ -343,42 +413,49 @@ const BALL_SETTLE = 1.6;   // seconds until it lies still
 // cannon position during the roll (real time τ seconds after the push)
 function rollX(r, tau) { const a = r.mu * G, tt = Math.min(tau, r.tStop); return -(r.vCannon * tt - 0.5 * a * tt * tt); }
 
-// slow motion timeline (seconds of replay): pause → push → flight → roll → hold
-const RP = { pause: 0.6, push: 1.6, flight: 0.9, roll: 4 };
-const replayLen = (r) => RP.pause + RP.push + RP.flight + Math.max(r.tStop, BALL_SETTLE * 0.6) * RP.roll + 0.8;
-function replayRealTime(t, rec) {   // the real-world time this frame shows
-  const r = rec.r, P0 = RP.pause, P1 = P0 + RP.push, P2 = P1 + RP.flight;
-  if (t < P0) return 0;
-  if (t < P1) return 0.01 * (t - P0) / RP.push;               // the push lasts about 1/100 s
-  if (t < P2) return 0.01 + ((BACKSTOP_X - MUZZLE.x) / r.vBall) * (t - P1) / RP.flight;
-  return 0.01 + (BACKSTOP_X - MUZZLE.x) / r.vBall + Math.min(r.tStop, (t - P2) / RP.roll);
+// Slow motion uses ONE clock for everything, so the ball and the cannon start moving at the same instant (the
+// powder pushes both at once). The first 1/70 s (the push inside the barrel and the ball's flight) is slowed about
+// 160 times; then the clock speeds up smoothly to 4 times slower than real life for the cannon's roll. The cannon is
+// hundreds of times heavier than the ball, so while the ball flies it has only just started to move.
+const RP = { pause: 0.6, fast: 2.4, ramp: 1.2, slow: 4 };
+const TAU_FAST = 0.015, PUSH_T = 0.01;              // real seconds: the very slow part; how long the powder pushes
+const R0 = TAU_FAST / RP.fast, R1 = 1 / RP.slow;      // real seconds per replay second, before and after the ramp
+function tauOf(t) {   // the real-world time a replay moment shows
+  if (t <= RP.pause) return 0;
+  let u = t - RP.pause;
+  if (u <= RP.fast) return R0 * u;
+  u -= RP.fast;
+  if (u <= RP.ramp) return TAU_FAST + R0 * u + (R1 - R0) * u * u / (2 * RP.ramp);
+  return TAU_FAST + (R0 + R1) * RP.ramp / 2 + R1 * (u - RP.ramp);
 }
+const PUSH_END_T = RP.pause + PUSH_T / R0;          // replay time when the ball leaves the muzzle
+const LOOK_T = RP.pause + 0.7 * PUSH_T / R0;         // replay pauses here (arrows on) so students can compare the pushes
+const hitTau = (r) => PUSH_T + (BALL_HIT.x - MUZZLE.x) / r.vBall;
+function replayLen(r) { const end = Math.max(r.tStop, hitTau(r) + BALL_SETTLE); let t = RP.pause; while (tauOf(t) < end) t += 0.05; return t + 0.8; }
+const replayRealTime = (t) => tauOf(t);
+function showPushArrows(cx, ballX, o) {
+  const A = L.arrows, Lp = 1.1;
+  A.ball.visible = A.cannon.visible = true; A.ball.setLength(Lp); A.cannon.setLength(Lp);
+  A.ball.setOpacity(o); A.cannon.setOpacity(o);
+  A.ball.position.set(ballX + 0.12, MUZZLE.y + 0.32, 0); A.ball.rotation.set(0, 0, 0);
+  A.cannon.position.set(cx + VENT.x - 0.05, MUZZLE.y + 0.32, 0); A.cannon.rotation.set(0, 0, Math.PI);
+}
+function showFriction(cx, blocked) { const A = L.arrows.friction; A.visible = true; A.setOpacity(1); A.setLength(blocked ? 1.0 : 0.55); A.position.set(cx - WHEEL_R * 0.2, 0.12, 1.02); }
 function poseReplay(t, rec, withArrows) {
-  const r = rec.r, P0 = RP.pause, P1 = P0 + RP.push, P2 = P1 + RP.flight;
-  const kick = -Math.min(0.03, r.d * 0.06);
-  let cx = 0;
-  L.ball.visible = true;
-  if (t < P0) { cx = 0; L.ball.visible = false; }
-  else if (t < P1) { const f = (t - P0) / RP.push, e = f * f; cx = kick * e; L.ball.position.set(-0.5 + (MUZZLE.x + 0.5) * e, MUZZLE.y, 0); }
-  else if (t < P2) { const f = (t - P1) / RP.flight; cx = kick; L.ball.position.set(MUZZLE.x + (BALL_HIT.x - MUZZLE.x) * f, MUZZLE.y, 0); }
-  else {
-    const tau = (t - P2) / RP.roll, full = rollX(r, r.tStop) || -1e-6;
-    cx = kick + rollX(r, tau) * ((full - kick) / full);   // ends exactly where the real shot stopped
-    const [bx, by] = ballAt((t - P2) / RP.roll); L.ball.position.set(bx, by, 0);
-  }
+  const r = rec.r, tau = tauOf(t), cx = rollX(r, tau), th = hitTau(r);
+  L.ball.visible = t > RP.pause;
+  if (tau < PUSH_T) { const f = tau / PUSH_T; L.ball.position.set(cx - 0.55 + (MUZZLE.x + 0.55) * f * f, MUZZLE.y, 0); }   // inside the barrel
+  else if (tau < th) L.ball.position.set(Math.min(BALL_HIT.x, rollX(r, PUSH_T) + MUZZLE.x + r.vBall * (tau - PUSH_T)), MUZZLE.y, 0);
+  else { const [bx, by] = ballAt(tau - th); L.ball.position.set(bx, by, 0); }
   L.setCannonX(cx, wheels);
   hideArrows();
-  if (withArrows && t >= P0 && t < P1 + 0.15) {   // equal and opposite pushes while the powder burns
-    const Lp = 1.1;
-    const A = L.arrows;
-    A.ball.visible = true; A.ball.setLength(Lp); A.ball.position.set(L.ball.position.x + 0.12, MUZZLE.y + 0.32, 0); A.ball.rotation.set(0, 0, 0);
-    A.cannon.visible = true; A.cannon.setLength(Lp); A.cannon.position.set(cx + VENT.x - 0.05, MUZZLE.y + 0.32, 0); A.cannon.rotation.set(0, 0, Math.PI);
-    A.cannon.userData.label.rotation.set(0, 0, 0);
+  if (!withArrows) return;
+  // the two pushes: full size while the powder pushes, then they fade slowly so students can still compare them
+  if (t >= RP.pause && t < PUSH_END_T + 2.5) {
+    const o = t < PUSH_END_T ? 1 : 1 - (t - PUSH_END_T) / 2.5;
+    showPushArrows(cx, tau < PUSH_T ? L.ball.position.x : rollX(r, PUSH_T) + MUZZLE.x, Math.max(0.15, o));
   }
-  if (withArrows && t >= P2 && (t - P2) / RP.roll < r.tStop) {   // friction slows the rolling cannon
-    const A = L.arrows.friction, blocked = rec.st.wheels === 'blocked';
-    A.visible = true; A.setLength(blocked ? 1.0 : 0.55); A.position.set(cx - WHEEL_R * 0.2, 0.12, 1.02);
-  }
+  if (tau > PUSH_T && tau < r.tStop) showFriction(cx, rec.st.wheels === 'blocked');   // friction slows the rolling cannon
 }
 
 function startReplay(withArrows) {
@@ -403,7 +480,7 @@ function endReplay() {
   if (rec) { const [bx, by] = ballAt(BALL_SETTLE); L.ball.position.set(bx, by, 0); }
   if (rec) L.setCannonX(rollX(rec.r, rec.r.tStop), wheels);
   if (phase === 'watch') phase = 'answer';
-  if (rec && (phase === 'test' || phase === 'challenge')) { loupe.mesh.visible = true; updateLoupe(); }
+  if (rec && (phase === 'test' || phase === 'challenge' || (phase === 'gcomp' && awaitRecord))) { loupe.mesh.visible = true; updateLoupe(); }
   refresh();
 }
 
@@ -427,9 +504,8 @@ function updateAnim(dt) {
     L.setCannonX(rollX(r, anim.t), wheels);
     hideArrows();
     if (test.arrows && phase === 'test') {
-      if (anim.t < 0.25) { const A = L.arrows; A.ball.visible = A.cannon.visible = true; A.ball.setLength(1.1); A.cannon.setLength(1.1);
-        A.ball.position.set(MUZZLE.x + 0.2, MUZZLE.y + 0.32, 0); A.cannon.position.set(L.cannonX + VENT.x - 0.05, MUZZLE.y + 0.32, 0); A.cannon.rotation.set(0, 0, Math.PI); }
-      else if (anim.t < r.tStop) { const A = L.arrows.friction; A.visible = true; A.setLength(anim.rec.st.wheels === 'blocked' ? 1 : 0.55); A.position.set(L.cannonX - WHEEL_R * 0.2, 0.12, 1.02); }
+      if (anim.t < 2.2) showPushArrows(L.cannonX, MUZZLE.x + 0.1, anim.t < 1.2 ? 1 : 1 - (anim.t - 1.2));   // the pushes stay up for 2 s, fading
+      if (anim.t < r.tStop) showFriction(L.cannonX, anim.rec.st.wheels === 'blocked');
     }
     if (!S.calm && !anim.smoked) { anim.smoked = true; startSmoke(); }
     if (anim.t > Math.max(r.tStop, BALL_SETTLE) + 0.2) { const rec = anim.rec; anim = null; hideArrows(); shotDone(rec); }   // the ball stays where it landed
@@ -438,8 +514,8 @@ function updateAnim(dt) {
       anim.t += dt;
       const len = replayLen(anim.rec.r);
       if (anim.t >= len) { anim.t = len; anim.playing = false; }
-      const P1 = RP.pause + RP.push;
-      if (!S.calm && anim.t - dt < P1 && anim.t >= P1) startSmoke();
+      if (!S.calm && anim.t - dt < PUSH_END_T && anim.t >= PUSH_END_T) startSmoke();
+      if (anim.arrows && !anim.looked && anim.t >= LOOK_T) { anim.t = LOOK_T; anim.playing = false; anim.looked = true; }   // stop on the pushes
       poseReplay(anim.t, anim.rec, anim.arrows);
       if ((panelTick += dt) > 0.5 || !anim.playing) { panelTick = 0; refresh(); }
     }
@@ -607,7 +683,7 @@ function layoutHandle() {
 function updateRope() {
   const v = L.cannon.position.clone().add(VENT), h = L.handle.position;
   const pos = L.rope.geometry.attributes.position; pos.setXYZ(0, v.x, v.y, v.z); pos.setXYZ(1, h.x, h.y, h.z); pos.needsUpdate = true;
-  const showHandle = S.lanyard && !optionsOpen && (phase === 'try' || phase === 'test' || phase === 'challenge');
+  const showHandle = S.lanyard && !optionsOpen && (canFireNow() || !!pull);
   L.handle.visible = L.rope.visible = showHandle;
   L.handle.userData.glow.visible = showHandle && !anim && !S.calm ? true : showHandle && !anim;
   L.handle.userData.glow.material.opacity = handleNear || pull ? 0.45 : S.calm ? 0.16 : 0.12 + 0.1 * Math.sin(performance.now() / 300);
@@ -689,7 +765,7 @@ function setRayFrom(c) {
 const panelHit = () => raycaster.intersectObject(panel.mesh, false)[0] || null;
 const idleOrRollingBack = () => !anim || anim.kind === 'return';
 const handleHit = () => (L.handle.visible && idleOrRollingBack() ? raycaster.intersectObject(L.handle.userData.glow, false)[0] : null);
-const trackHit = () => (phase === 'test' && idleOrRollingBack() && countFor(curLevel().id) < 3 ? raycaster.intersectObject(L.track, false)[0] : null);
+const trackHit = () => (canPredict() && idleOrRollingBack() ? raycaster.intersectObject(L.track, false)[0] : null);
 let pull = null, drag = null;   // pulling the lanyard; dragging the prediction flag
 let heightMoved = 0;
 function onSelectStart(c) {
@@ -715,7 +791,7 @@ function onSelectEnd(c) {
 function setPrediction(worldPoint) {
   const p = lab.worldToLocal(worldPoint.clone());
   const cm = Math.max(0, Math.min(RULER_CM, Math.round(-p.x * 100)));
-  test.predCm = cm; test.predFor = curLevel().id;
+  test.predCm = cm; test.predFor = predKey();
   L.predFlag.position.set(-cm / 100, 0, RULER_Z + 0.06); L.predFlag.visible = true; sizeLabels();
   loupe.mesh.visible = false;
   refresh();
@@ -726,8 +802,7 @@ function updatePull() {
   L.handle.position.copy(lab.worldToLocal(now.clone()));
   if (now.distanceTo(pull.start) > 0.12) {   // a firm tug (12 cm) fires the cannon
     pull = null; L.handle.position.copy(handleLocal);
-    if (phase === 'test' && test.predFor !== curLevel().id) return;   // place a prediction first
-    fire();
+    fire();   // (it only fires when a shot is allowed: prediction placed, results recorded)
   }
 }
 function findTarget(c, frame) {
@@ -807,7 +882,7 @@ renderer.domElement.addEventListener('pointerup', (e) => {
   if (moved > 6) return;
   unlockAudio(); pointerRay(e);
   const ph = panelHit(); if (ph) return onButton(panel.buttonAt(ph.uv));
-  if (handleHit()) { if (phase !== 'test' || test.predFor === curLevel().id) fire(); }
+  if (handleHit()) fire();
 });
 
 // ═════════════ anchors: keep the lab fixed to the real room ═════════════
@@ -1021,7 +1096,7 @@ window.__dbg = {
   THREE, S, L, panel, loupe, hint, camera, lab, scene, controls,
   state: () => ({ phase, optionsOpen, planKey, levelIdx: test.levelIdx, data: JSON.parse(JSON.stringify(test.data)), predCm: test.predCm, predFor: test.predFor,
     anim: anim ? { kind: anim.kind, t: anim.t, playing: anim.playing } : null, cannonX: L.cannonX, mode, placing, size: S.size, lang: S.lang,
-    lastCm: lastShot?.cm ?? null, shotStartX, challenge: ch.target ? { target: ch.target.cm, result: ch.result } : null, settings: { ...settings },
+    lastCm: lastShot?.cm ?? null, shotStartX, path: PATH, awaitRecord, guided: { key: GD.key, i: GD.i, results: [...GD.results] }, challenge: ch.target ? { target: ch.target.cm, result: ch.result } : null, settings: { ...settings },
     panelOverflow: panel.overflow, labVisible: lab.visible, handleVisible: L.handle.visible, loupe: loupe.mesh.visible }),
   press: (id) => onButton(id),
   predictCm: (cm) => setPrediction(lab.localToWorld(new THREE.Vector3(-cm / 100, 0, RULER_Z))),

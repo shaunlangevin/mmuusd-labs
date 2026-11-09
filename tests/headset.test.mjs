@@ -21,7 +21,7 @@ const labPose = (p) => p.evaluate(() => ({ p: window.__dbg.lab.position.toArray(
 export default (test) => {
   test('desk size: the lab appears in front, the lanyard fires it, pointing places the prediction', async () => {
     const p = await page({ xr: true });
-    await ready(p);
+    await ready(p, '?path=full');
     ok(await p.evaluate(() => !document.getElementById('btn-ar').hidden), 'the headset button shows');
     await p.click('#btn-ar'); await sleep(2500);
     let s = await st(p); eq([s.mode, s.size, s.labVisible, s.placing], ['ar', 'desk', true, false], 'desk size places itself');
@@ -45,7 +45,8 @@ export default (test) => {
     s = await st(p); near(s.predCm, 30, 4, 'pointing at the track places the prediction flag');
     ok(await p.evaluate(() => window.__dbg.L.predFlag.visible), 'flag shows');
     await tap(p, 'fire'); await idle(p);
-    s = await st(p); eq(Object.values(s.data)[0].length, 1, 'one trial recorded'); ok(s.loupe, 'magnifier');
+    s = await st(p); eq(Object.values(s.data)[0].length, 1, 'one trial recorded'); ok(s.loupe && s.awaitRecord, 'magnifier, and "Record your results"');
+    await tap(p, 'recorded'); await idle(p); ok(!(await st(p)).awaitRecord, '"I recorded it" works with the controller');
     eq(pageErrors(p), [], 'page errors'); eq(p.offsite, [], 'requests to other sites');
     await p.close();
   }, { slow: true });
@@ -114,7 +115,7 @@ export default (test) => {
 
   test('the lanyard: grip button at the handle, and a pinch right at the handle, both pull it', async () => {
     const p = await page({ xr: true });
-    await ready(p);
+    await ready(p, '?path=full');
     await p.click('#btn-ar'); await sleep(2500);
     const h = await p.evaluate(() => window.__dbg.handleWorld());
     // grip (squeeze) with the controller held at the handle
@@ -143,7 +144,7 @@ export default (test) => {
   test('the panel never covers the cannon (desk, half and life size, tallest screen)', async () => {
     for (const size of ['desk', 'half', 'life']) {
       const p = await page({ xr: true });
-      await ready(p, '?size=' + size);
+      await ready(p, '?path=full&size=' + size);
       await p.click('#btn-ar'); await sleep(2500);
       if (size !== 'desk') { await p.waitForFunction(() => window.__dbg.state().placing, null, { timeout: 60000 }); await aim(p, CP, [0, 0, size === 'life' ? -3 : -2.2]); await trigger(p); }
       ok((await st(p)).labVisible, size + ': placed');

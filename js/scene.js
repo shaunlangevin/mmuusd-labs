@@ -139,6 +139,7 @@ export function buildLab(onProgress) {
     g.userData = { shaft, head, label: addLabel(g, text, new THREE.Vector3(0.5, 0.3, 0), { worldW: 1.2 }) };
     g.visible = false; lab.add(g);
     g.setLength = (L) => { shaft.scale.x = Math.max(0.001, L - 0.22); head.position.x = Math.max(0.12, L - 0.11); g.userData.label.position.x = L / 2; };
+    g.setOpacity = (o) => { mat.opacity = o; g.userData.label.material.opacity = o; };
     return g;
   };
   // blue and orange (not red/green) so colour-blind students can tell the two pushes apart; each is labelled too
@@ -154,10 +155,12 @@ export function buildLab(onProgress) {
   const predFlag = flag(0x2f7de1); predFlag.position.z = RULER_Z;
   predFlag.userData.label = addLabel(predFlag, 'your prediction', new THREE.Vector3(0, 0.66, 0), { worldW: 0.9, bg: 'rgba(47,125,225,0.9)', border: null, color: '#fff' });
   const ghosts = [];
-  const addGhost = (cm, levelIndex, n) => {
+  const addGhost = (cm, levelIndex, n, text = String(n)) => {
     const g = flag(LEVEL_COLORS[levelIndex % LEVEL_COLORS.length], 0.55);
     g.position.set(-cm / 100, 0, RULER_Z - 0.08 - 0.06 * (n - 1)); g.scale.setScalar(0.75); g.visible = true;
-    g.userData.label = addLabel(g, String(n), new THREE.Vector3(-0.1, 0.43, 0.01), { worldW: 0.18, bg: null, color: '#1a1612', border: null });
+    g.userData.label = text === String(n)
+      ? addLabel(g, text, new THREE.Vector3(-0.1, 0.43, 0.01), { worldW: 0.18, bg: null, color: '#1a1612', border: null })
+      : addLabel(g, text, new THREE.Vector3(0, 0.66, 0), { worldW: 0.8 });   // guided mode: the flag says which shot it was
     ghosts.push(g); return g;
   };
   const clearGhosts = () => { for (const g of ghosts) { lab.remove(g); const i = labels.indexOf(g.userData.label); if (i >= 0) labels.splice(i, 1); } ghosts.length = 0; };
