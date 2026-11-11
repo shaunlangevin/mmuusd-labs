@@ -76,7 +76,8 @@ export function buildLab(onProgress) {
   ruler.position.set(0.0125 - rulerW / 2, 0.006, RULER_Z + rulerW / R.aspect / 2 - 0.02); ruler.renderOrder = 2;
   ruler.name = 'ruler'; lab.add(ruler);
   // an invisible strip over the track, for pointing at it (prediction flag)
-  const track = new THREE.Mesh(new THREE.PlaneGeometry(rulerW + 0.3, 1.2).rotateX(-Math.PI / 2), new THREE.MeshBasicMaterial({ visible: false }));
+  // (generous on purpose: pointing anywhere near the ruler places the flag; the flag snaps to the ruler)
+  const track = new THREE.Mesh(new THREE.PlaneGeometry(rulerW + 1.0, 2.4).rotateX(-Math.PI / 2), new THREE.MeshBasicMaterial({ visible: false }));
   track.position.set(ruler.position.x, 0.01, RULER_Z - 0.2); track.name = 'track'; lab.add(track);
   addLabel(lab, 'cm', new THREE.Vector3(0.18, 0.05, RULER_Z + 0.12), { worldW: 0.35, bg: null, color: '#efe2c4' });
 

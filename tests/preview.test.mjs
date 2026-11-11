@@ -24,7 +24,7 @@ export default (test) => {
     s = await st(p); eq([s.phase, s.planKey, s.settings], ['test', 'cannon', { ball: 'iron', cannon: 'c1000', powder: 'p2', wheels: 'rolling' }], 'testing the cannon\'s weight, others kept the same');
     await idle(p);   // the cannon rolls back to the start line
     await press(p, 'fire'); eq((await st(p)).anim, null, 'Fire waits for a prediction');
-    ok(await p.evaluate(() => window.__dbg.panel.spec.blocks.some((b) => b.p && b.p.includes('click on the ruler'))), 'on a screen, the panel says to click the ruler (not "pull the trigger")');
+    ok(await p.evaluate(() => window.__dbg.panel.spec.blocks.some((b) => b.p && b.p.includes('Click the ruler'))), 'on a screen, the panel says to click the ruler (not "pull the trigger")');
     eq(await p.evaluate(() => window.__dbg.panel.buttons.find((b) => b.id === 'fire').disabled), true, 'Fire is off until the prediction');
     const means = [];
     for (let i = 0; i < 3; i++) {
@@ -90,15 +90,15 @@ export default (test) => {
     ok(!ids.some((i) => i.startsWith('plan:')), 'locked: students cannot pick another variable');
     eq((await st(p)).planKey, 'powder', 'the class tests the powder');
     await press(p, 'startTest');
-    ok(await p.evaluate(() => window.__dbg.panel.spec.blocks.some((b) => b.p && b.p.includes('regresa el cañón'))), 'while it rolls back to the start line, the panel says so');
+    ok(await p.evaluate(() => window.__dbg.panel.spec.blocks.some((b) => b.p && b.p.includes('Regresando el cañón'))), 'while it rolls back to the start line, the panel says so');
     await idle(p);
-    ok(await p.evaluate(() => window.__dbg.panel.spec.blocks.some((b) => b.p && b.p.includes('haz clic en la regla'))), 'Spanish screen wording');
+    ok(await p.evaluate(() => window.__dbg.panel.spec.blocks.some((b) => b.p && b.p.includes('Haz clic en la regla'))), 'Spanish screen wording');
     await p.evaluate(() => window.__dbg.predictCm(20)); await press(p, 'fire'); await idle(p);
     ok(await p.evaluate(() => window.__dbg.panel.spec.title === 'Anota tus resultados'), '"Record your results" in Spanish');
     const cell = await p.evaluate(() => window.__dbg.panel.spec.blocks.find((b) => b.table).table.rows[0][1]);
     eq(cell, '✓', 'without "Show number", students read the ruler and the table just ticks the trial');
     eq(await p.evaluate(() => window.__dbg.loupe.showNum), false, 'the magnifier has no number');
-    await press(p, 'options'); await press(p, 'acc:num');
+    await p.click('#menu'); await p.click('#l-setup'); await p.click('#acc-seg button >> nth=2');   // Teacher setup on the start page
     eq(await p.evaluate(() => window.__dbg.loupe.showNum), true, 'the support turns the number on');
     await p.close();
   });
@@ -110,8 +110,8 @@ export default (test) => {
     await press(p, 'fire'); await idle(p); await press(p, 'q3:same'); await replayEnd(p); await press(p, 'rp:done'); await press(p, 'toPlan');
     await press(p, 'plan:powder'); await press(p, 'startTest'); await p.evaluate(() => window.__dbg.predictCm(30)); await press(p, 'fire'); await idle(p);
     ok(Object.keys((await st(p)).data).length === 1, 'a trial is in the table');
+    ok((await p.textContent('#credit')).includes('Zack_Hawley'), 'the model credit is on the start page');
     await press(p, 'options');
-    ok(await p.evaluate(() => window.__dbg.panel.spec.blocks.some((b) => b.p && b.p.includes('Zack_Hawley'))), 'the model credit is in Options');
     await press(p, 'restart'); eq((await st(p)).phase, 'test', 'one tap only asks to confirm');
     await press(p, 'restart');
     await idle(p); const s = await st(p);
@@ -135,23 +135,31 @@ export default (test) => {
       eq((await st(p)).path, 'guided', 'guided is the default');
       await p.click('#btn-preview');
       const fits = [];
-      const fit = async (n) => { if (await p.evaluate(() => window.__dbg.panel.overflow)) fits.push(n); };
+      let tallest = 0;
+      const fit = async (n) => { const [o, h] = await p.evaluate(() => [window.__dbg.panel.overflow, window.__dbg.panel.usedH]); if (o) fits.push(n); tallest = Math.max(tallest, h); };
       await fit('try');
       await press(p, 'fire'); await idle(p); await fit('q3');
       await press(p, 'q3:same');
       await p.waitForFunction(() => { const a = window.__dbg.state().anim; return a && !a.playing; }, null, { timeout: 240000 });
       ok(await p.evaluate(() => window.__dbg.L.arrows.ball.visible && window.__dbg.L.arrows.cannon.visible), 'slow motion stops on the two pushes, arrows showing');
       ok(await p.evaluate(() => window.__dbg.state().cannonX < 0 && window.__dbg.L.ball.position.x < 1.0), 'the cannon has started moving while the ball is still in the barrel');
+      eq(await p.evaluate(() => window.__dbg.panel.buttons.filter((b) => !b.disabled).map((b) => b.id)), ['rp:toggle'], 'slow motion has one button: Continue');
+      await press(p, 'rp:toggle');
+      eq(await p.evaluate(() => window.__dbg.panel.buttons.filter((b) => !b.disabled).map((b) => b.id)), [], 'while it plays, Continue waits');
+      await p.evaluate(() => window.__dbg.replayAt(99));   // (skip to the end; the emulator is slow)
+      eq(await p.evaluate(() => window.__dbg.panel.buttons.filter((b) => !b.disabled).map((b) => b.id)), ['rp:done'], 'at the end: Continue');
       await press(p, 'rp:done'); await fit('answer');
       const ids = await p.evaluate(() => window.__dbg.panel.buttons.map((b) => b.id));
       ok(ids.includes('toCompare') && !ids.includes('toPlan'), 'no planning screen in the guided path');
       await press(p, 'toCompare'); await idle(p); await fit('compare');
       let s = await st(p); eq([s.phase, s.settings.cannon], ['gcomp', 'c1000'], 'shot 1: the light cannon');
-      eq(await p.evaluate(() => window.__dbg.panel.buttons.filter((b) => !b.disabled).map((b) => b.id)), ['options'], 'only one thing to do: predict (Fire is off)');
+      eq(await p.evaluate(() => window.__dbg.panel.buttons.filter((b) => !b.disabled).map((b) => b.id)), ['options', 'nudge:5', 'nudge:-5'], 'only one thing to do: predict (Fire is off); the ◀ ▶ buttons can place the flag');
+      await press(p, 'nudge:5'); eq((await st(p)).predCm, 20, 'the first ◀ puts the flag at 20 cm'); await press(p, 'nudge:5'); eq((await st(p)).predCm, 25, '◀ moves it 5 cm farther');
+      await press(p, 'nudge:-5'); eq((await st(p)).predCm, 20, '▶ moves it 5 cm closer');
       await p.evaluate(() => window.__dbg.predictCm(50));
       await press(p, 'fire'); await idle(p); await fit('record 1');
       s = await st(p); ok(s.awaitRecord, 'Record your results');
-      eq(await p.evaluate(() => window.__dbg.panel.buttons.filter((b) => !b.disabled).map((b) => b.id)), ['recorded', 'options'], 'one big button');
+      eq(await p.evaluate(() => window.__dbg.panel.buttons.filter((b) => !b.disabled).map((b) => b.id)), ['options', 'recorded'], 'one big button (and the small ⚙ in the corner)');
       await press(p, 'recorded'); await idle(p);
       s = await st(p); eq([s.settings.cannon, Math.abs(s.cannonX) < 1e-6, s.predCm], ['c2000', true, null], 'shot 2: heavy cannon, rolled back to 0, new prediction needed');
       await p.evaluate(() => window.__dbg.predictCm(50)); await press(p, 'fire'); await idle(p); await fit('record 2'); await press(p, 'recorded'); await idle(p);
@@ -161,8 +169,30 @@ export default (test) => {
       await press(p, 'gDone'); eq((await st(p)).phase, 'gdone', 'done'); await fit('done');
       await press(p, 'again'); await idle(p); eq((await st(p)).phase, 'try', 'start again for the next pair');
       eq(fits, [], `${lang}: guided screens that overflow`);
+      const limit = await p.evaluate(() => window.__dbg.TALLEST_PX.guided);
+      ok(tallest <= limit, `${lang}: the tallest guided screen (${tallest} px) fits the space the panel docks for (${limit} px)`);
       eq(pageErrors(p), [], 'page errors');
       await p.close();
     }
   }, { slow: true });
+
+  test('slow motion: the cannon starts moving with the ball, and a magnifier shows its first millimetres', async () => {
+    const p = await page();
+    await ready(p);
+    await toPlan(p);
+    await press(p, 'q3:same');
+    const R = await p.evaluate(() => window.__dbg.REPLAY);
+    const at = (t) => p.evaluate((t) => window.__dbg.replayAt(t), t);
+    let r = await at(0.3); eq([r.cm, r.mag], [0, true], 'before the shot: the magnifier is on the cannon, at 0');
+    r = await at(R.look);
+    ok(r.cm > 0.3 && r.ballX < 0.9 + 0.1, `while the powder is still pushing the ball, the cannon has already moved: ${r.cm.toFixed(2)} cm`);
+    await at(R.pushEnd + 0.4);
+    ok((await p.evaluate(() => window.__dbg.panel.spec.blocks.some((b) => /magnifier/.test(b.p || '')))), 'the panel points students to the magnifier');
+    r = await at(R.pause + R.fast);
+    ok(r.cm > 1 && r.cm < 3 && r.mag, `when the ball reaches the sandbags, the cannon has moved about 2 cm: ${r.cm.toFixed(2)}`);
+    r = await at(R.pause + R.fast + 1.5); eq(r.mag, false, 'the magnifier goes away once the cannon rolls on');
+    await press(p, 'rp:done'); eq((await st(p)).loupe, false, 'and stays away after slow motion');
+    eq(pageErrors(p), [], 'page errors');
+    await p.close();
+  });
 };

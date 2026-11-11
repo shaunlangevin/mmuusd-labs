@@ -70,7 +70,7 @@ export default (test) => {
     let s = await st(p);
     eq([s.big, s.num, s.lanyard, s.lang, s.calm], [true, true, false, 'es', false], 'bigger text for all; numbers, Fire button and Spanish for headset 3; not headset 4’s calm');
     // the student turns bigger text off in Options: it stays off while the teacher changes something else
-    await press(p, 'options'); await press(p, 'acc:big'); await press(p, 'closeOptions');
+    await press(p, 'options'); await press(p, 'text:l'); await press(p, 'closeOptions');
     await room(p, 'south', { bigText: true, access: { h3: 'nfs', h4: 'c' }, calm: true, updatedAt: NOW() });
     s = await st(p); eq([s.big, s.calm], [false, true], 'the student’s choice stays; the new support arrives');
     await room(p, 'south', { calm: true, updatedAt: NOW() });
